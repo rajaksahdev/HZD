@@ -83,15 +83,29 @@ python -m pipelines.labels --dry-days 2024  # list dry monsoon days in a year
   sources and that each point lies in the ward named. See `docs/labels.md` for the rules and
   limits.
 
+## Forecast core (Stage 4)
+
+```bash
+python -m pipelines.run --start 2024-05-30 --end 2024-10-01 --sources openmeteo,imd   # backfill
+python -m models.forecast --train 2024-06-01 2024-09-30 --test 2025-06-01 2025-09-30     --report docs/forecast_skill.md
+```
+
+Scores daily rain from ECMWF, GFS and ICON, their average, and the average after quantile-mapping
+bias correction, against IMD observed rain and a persistence baseline. The skill table (POD, FAR,
+CSI) is in `docs/forecast_skill.md`. The learned correction is saved to
+`data/processed/models/rain_quantile_map.json`. The pySTEPS baseline is not run: it needs IMERG
+or GSMaP rain maps, which need accounts.
+
 ## Layout
 
 ```
 api/        config, shared schemas (api/schemas.py), database tables
 pipelines/  raw store, pilot grid, one fetcher per source, runner, QC checks, fault detector
 scripts/    load_wards.py
-models/ assistant/ web/   later stages
+models/     forecast.py (bias correction and skill scores)
+assistant/ web/   later stages
 labels/     flood_events.csv, the hand-kept flood label table
-docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md
+docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md
 data/       raw and processed files, not committed
 ```
 
