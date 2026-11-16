@@ -1,0 +1,23 @@
+# Stage 0-1 set. Add more as later stages need them.
+pandas
+numpy
+xarray
+netCDF4
+rasterio
+geopandas
+imdlib
+earthaccess
+cdsapi
+requests
+scikit-learn
+xgboost
+fastapi
+uvicorn
+pydantic
+sqlalchemy
+geoalchemy2
+psycopg[binary]
+python-dotenv
+pytest
+ruff
+pre-commit
