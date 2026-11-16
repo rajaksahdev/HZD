@@ -9,7 +9,7 @@ import argparse
 import sys
 from datetime import UTC, date, datetime, timedelta
 
-from pipelines import store
+from pipelines import qc, store
 from pipelines.sources import SOURCES
 
 FORECAST_SOURCES = {"openmeteo", "tide"}  # the only ones with data for future days
@@ -21,7 +21,11 @@ def daterange(start: date, end: date):
 
 
 def process(source: str, day: date, fetch: bool, force: bool) -> str:
-    """Returns 'ok', 'no data' or 'error: ...' for one source and day."""
+    """Returns 'ok', 'no data' or 'error: ...' for one source and day.
+
+    Data is validated before it is written: a schema failure is an error and nothing is written;
+    out-of-range values are set to missing; range and gap findings go to the QC log.
+    """
     module = SOURCES[source]
     try:
         if fetch:
@@ -29,6 +33,10 @@ def process(source: str, day: date, fetch: bool, force: bool) -> str:
         ds = module.harmonize(day)
         if ds is None:
             return "no data"
+        ds, issues = qc.validate(source, ds, day)
+        qc.log_issues(source, day, issues)
+        for issue in issues:
+            print(f"    qc {source} {day}: {issue}", flush=True)
         ds.attrs["harmonised_at"] = datetime.now(UTC).isoformat(timespec="seconds")
         out = store.clean_path(source, day)
         out.parent.mkdir(parents=True, exist_ok=True)
