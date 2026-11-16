@@ -67,6 +67,22 @@ The second command trains an Isolation Forest on hourly series and reports how m
 spikes, flat lines and drifts it catches. Results are in `docs/qc_report.md`. The detector is not
 yet applied to live data: there are no station feeds to apply it to.
 
+## Labels and static features (Stage 3)
+
+```bash
+python -m pipelines.static                  # terrain, drains and land cover per ward -> CSV and PostGIS
+python -m pipelines.labels                  # validate labels/flood_events.csv and print a summary
+python -m pipelines.labels --dry-days 2024  # list dry monsoon days in a year
+```
+
+- **Static features** (`ward_static` table, `data/processed/static/ward_features.csv`): area,
+  elevation, share of land below 5 m, slope, distance to the nearest mapped waterway, waterway
+  length per km², and built-up, green, water and wetland shares.
+- **Flood labels** (`labels/flood_events.csv`, kept in git): one row per reported flooding of a
+  ward on a date, with the source link. Add rows by hand; the validator checks ward ids, dates,
+  sources and that each point lies in the ward named. See `docs/labels.md` for the rules and
+  limits.
+
 ## Layout
 
 ```
@@ -74,7 +90,8 @@ api/        config, shared schemas (api/schemas.py), database tables
 pipelines/  raw store, pilot grid, one fetcher per source, runner, QC checks, fault detector
 scripts/    load_wards.py
 models/ assistant/ web/   later stages
-docs/       data_log.md (source, date, licence, citation), qc_report.md
+labels/     flood_events.csv, the hand-kept flood label table
+docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md
 data/       raw and processed files, not committed
 ```
 

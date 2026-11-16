@@ -14,5 +14,7 @@ access date, and the entries marked "confirm" have not been checked yet.
 | IMD gridded | India rain and temperature grids | `imdlib` | 2026-11-16 | confirm | confirm | `data/raw/imd/` |
 | MOSDAC (INSAT) | Low-latency rainfall | Registration, needs approval | not yet | Research use only; must cite | confirm | `data/raw/mosdac/` |
 | Open-Meteo | Forecasts and tides | Open API, no key | 2026-11-16 | Free for non-commercial use | confirm | `data/raw/openmeteo/` |
-| OpenStreetMap | Roads, drains, shelters | Overpass / OSMnx | not yet | ODbL | © OpenStreetMap contributors | `data/raw/osm/` |
-| SRTM / Copernicus DEM | Terrain | Direct download | not yet | confirm | confirm | `data/raw/dem/` |
+| OpenStreetMap | Roads, drains, shelters | Overpass API | 2026-11-16 (waterways only) | ODbL | © OpenStreetMap contributors | `data/raw/osm/` |
+| Copernicus DEM GLO-30 | Terrain (surface heights, 30 m) | Direct download (AWS open data) | 2026-11-16 | confirm | confirm | `data/raw/dem/` |
+| ESA WorldCover 2021 v200 | Land cover, 10 m | Direct download (AWS open data) | 2026-11-16 | CC BY 4.0 | confirm | `data/raw/worldcover/` |
+| News reports | Flood labels | Web pages, links in `labels/flood_events.csv` | 2026-11-16 | Facts only; no text copied | Link per row | `labels/` |

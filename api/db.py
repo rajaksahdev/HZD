@@ -42,6 +42,25 @@ class WardRiskRow(Base):
     degraded: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class WardStatic(Base):
+    """Static features per ward, written by pipelines/static.py (Stage 3)."""
+
+    __tablename__ = "ward_static"
+
+    ward_id: Mapped[str] = mapped_column(ForeignKey("wards.ward_id"), primary_key=True)
+    area_km2: Mapped[float] = mapped_column(Float)
+    elevation_mean_m: Mapped[float] = mapped_column(Float)
+    elevation_p10_m: Mapped[float] = mapped_column(Float)
+    low_lying_frac: Mapped[float] = mapped_column(Float)  # share of the ward below 5 m
+    slope_mean_deg: Mapped[float] = mapped_column(Float)
+    drain_distance_mean_m: Mapped[float | None] = mapped_column(Float)
+    drain_km_per_km2: Mapped[float] = mapped_column(Float)
+    built_up_frac: Mapped[float] = mapped_column(Float)
+    green_frac: Mapped[float] = mapped_column(Float)
+    water_frac: Mapped[float] = mapped_column(Float)
+    wetland_frac: Mapped[float] = mapped_column(Float)
+
+
 def init_db() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
