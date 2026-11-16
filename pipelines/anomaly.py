@@ -154,10 +154,11 @@ def evaluate(series: Series, seed: int = 0) -> dict:
     detector = FaultDetector(series, n_train, seed)
     rng = np.random.default_rng(seed)
 
-    clean_flags = detector.flag(series.values)[n_train:]
+    all_clean_flags = detector.flag(series.values)
+    clean_flags = all_clean_flags[n_train:]
     rows = []
     for kind, label, hours, size in fault_cases():
-        caught, delays = 0, []
+        caught, by_chance, delays = 0, 0, []
         for _ in range(EVENTS):
             col = int(rng.integers(n_series))
             start = int(rng.integers(n_train + 1, n_time - hours))
@@ -167,6 +168,7 @@ def evaluate(series: Series, seed: int = 0) -> dict:
                 faulty[:, col], kind, start, hours, sign * size * detector.sigma
             )
             flags = detector.flag(faulty, column=col)[start : start + hours, 0]
+            by_chance += bool(all_clean_flags[start : start + hours, col].any())
             if flags.any():
                 caught += 1
                 delays.append(int(np.argmax(flags)))
@@ -178,6 +180,7 @@ def evaluate(series: Series, seed: int = 0) -> dict:
                 "events": EVENTS,
                 "caught": caught,
                 "rate": caught / EVENTS,
+                "chance_rate": by_chance / EVENTS,
                 "median_delay_h": float(np.median(delays)) if delays else float("nan"),
             }
         )
@@ -194,7 +197,8 @@ def evaluate(series: Series, seed: int = 0) -> dict:
 
 def report(results: list[dict], start: date, end: date) -> str:
     table = pd.DataFrame([row for r in results for row in r["rows"]])
-    overall = table.groupby("fault", sort=False)[["events", "caught"]].sum()
+    table["chance"] = table["chance_rate"] * table["events"]
+    overall = table.groupby("fault", sort=False)[["events", "caught", "chance"]].sum()
     lines = [
         "# QC report: fault detection on injected faults",
         "",
@@ -222,15 +226,21 @@ def report(results: list[dict], start: date, end: date) -> str:
         f"ramp reaching the stated size after {DRIFT_HOURS} hours.",
         "- **Caught** means at least one reading inside the fault was flagged. Delay is the "
         "median number of hours from the start of the fault to the first flag.",
+        "- **No-fault rate** is how often the same window had a flag before the fault was "
+        "injected. A long window can contain a false alarm by chance, so a detection rate is "
+        "only meaningful where it is well above this number.",
         "",
         "## Detection rate by fault type (all variables)",
         "",
-        "| Fault | Events | Caught | Detection rate |",
-        "|---|---|---|---|",
+        "| Fault | Events | Caught | Detection rate | No-fault rate |",
+        "|---|---|---|---|---|",
     ]
     for kind, row in overall.iterrows():
         rate = row["caught"] / row["events"]
-        lines.append(f"| {kind} | {row['events']} | {row['caught']} | {rate:.0%} |")
+        chance = row["chance"] / row["events"]
+        lines.append(
+            f"| {kind} | {row['events']:g} | {row['caught']:g} | {rate:.0%} | {chance:.0%} |"
+        )
     lines += [
         "",
         "## False alarms on clean test data",
@@ -247,14 +257,14 @@ def report(results: list[dict], start: date, end: date) -> str:
         "",
         "## Detection rate by variable, fault and size",
         "",
-        "| Variable | Fault | Size | Events | Caught | Detection rate | Median delay (h) |",
-        "|---|---|---|---|---|---|---|",
+        "| Variable | Fault | Size | Events | Caught | Detected | No-fault rate | Delay (h) |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for row in table.to_dict("records"):
         delay = "" if np.isnan(row["median_delay_h"]) else f"{row['median_delay_h']:g}"
         lines.append(
             f"| {row['variable']} | {row['fault']} | {row['size']} | {row['events']} | "
-            f"{row['caught']} | {row['rate']:.0%} | {delay} |"
+            f"{row['caught']} | {row['rate']:.0%} | {row['chance_rate']:.0%} | {delay} |"
         )
     lines += [
         "",

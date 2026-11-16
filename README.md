@@ -47,14 +47,34 @@ Schedule (Linux/WSL cron, hourly):
 On Windows, create a Task Scheduler task that runs
 `.venv\Scripts\python.exe -m pipelines.run --days-back 2 --days-ahead 2` from the project folder.
 
+## Validation and QC (Stage 2)
+
+Every dataset is checked before it is written to the clean zone:
+
+- **Schema:** variables, dimensions, units, pilot grid and time steps. A failure is an error and
+  the file is not written.
+- **Range:** values outside physical limits for Mumbai are set to missing and counted.
+- **Gap:** missing time steps and missing values are reported.
+
+Range and gap findings are appended to `data/processed/qc_log.jsonl`.
+
+```bash
+python -m pipelines.qc --start 2025-06-15 --end 2025-08-31     # re-check clean files, list missing days
+python -m pipelines.anomaly --start 2025-06-15 --end 2025-08-31 --report docs/qc_report.md
+```
+
+The second command trains an Isolation Forest on hourly series and reports how many injected
+spikes, flat lines and drifts it catches. Results are in `docs/qc_report.md`. The detector is not
+yet applied to live data: there are no station feeds to apply it to.
+
 ## Layout
 
 ```
 api/        config, shared schemas (api/schemas.py), database tables
-pipelines/  raw store, pilot grid, one fetcher per source, runner
+pipelines/  raw store, pilot grid, one fetcher per source, runner, QC checks, fault detector
 scripts/    load_wards.py
 models/ assistant/ web/   later stages
-docs/       data_log.md (source, date, licence, citation)
+docs/       data_log.md (source, date, licence, citation), qc_report.md
 data/       raw and processed files, not committed
 ```
 
