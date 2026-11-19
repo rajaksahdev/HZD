@@ -1,4 +1,4 @@
-"""The Semester 1 demo, end to end, from a fresh clone (after `bash start.sh`).
+"""The demo, end to end, from a fresh clone (after `bash start.sh`).
 
 python -m scripts.demo                  build what is missing, then check the API and map
 python -m scripts.demo --serve          ... and start the map at http://localhost:8000
@@ -13,7 +13,9 @@ skipped, so an interrupted run resumes):
   tide      harmonic tide fitted on 2023-2024 (Stage 5)
   forecast  rain bias correction learned on 2024, scored on 2025 (Stage 4)
   flood     XGBoost flood model (Stage 5)
-  today     today's data, today's risk run, and the 19 Aug 2025 hindcast (Stage 6)
+  heat      ERA5 1991-2025, full-year forecasts 2024-2025, heat levels and correction (Stage 9)
+  today     today's data, today's flood and heat runs, and two hindcasts: flood on
+            19 Aug 2025, heat on 23 Oct 2025 (Stages 6 and 9)
   replay    archived forecasts and the five replayed flood days (Stage 7)
   check     the API answers for every ward and the map is built
 
@@ -36,6 +38,13 @@ PY = sys.executable
 OUT = settings.data_dir / "demo"
 MODELS = settings.processed_dir / "models"
 HINDCAST_DAY = "2025-08-19"
+HEAT_DAY = "2025-10-23"  # the hottest day of 2025 in ERA5
+HEAT_DATA = (date(2024, 1, 31), date(2025, 12, 31))  # forecasts: ECMWF archive from Feb 2024
+HEAT_SPLIT = (
+    ("--train", "2024-02-01", "2024-07-31"),
+    ("--validate", "2024-08-01", "2024-12-31"),
+    ("--test", "2025-01-01", "2025-12-31"),
+)
 FORECAST_SEASONS = (2024, 2025)  # Stage 4: train on 2024, test on 2025
 RETRY_WAIT = 60  # seconds before retrying a failed step
 REPLAY_MONTHS = (("2024-05", "2024-10"), ("2025-05", "2025-10"))
@@ -121,10 +130,24 @@ def flood() -> None:
     run("models.flood", "--test-from", "2024", "--report", (OUT / "flood_model.md").as_posix())
 
 
+def heat_done() -> bool:
+    return (MODELS / "heat.json").exists()
+
+
+def heat() -> None:
+    first, last = (d.isoformat() for d in HEAT_DATA)
+    run("pipelines.run", "--start", first, "--end", last, "--sources", "openmeteo")
+    run("models.heat", "--fetch", "1991", "2025")
+    split = [part for period in HEAT_SPLIT for part in period]
+    run("models.heat", *split, "--report", (OUT / "heat.md").as_posix())
+
+
 def today() -> None:  # always runs: today changes every day
     run("pipelines.run", "--days-back", "4", "--days-ahead", "1", "--sources", "imd,openmeteo")
     run("models.risk", "--date", "today", "--rain", "forecast")
     run("models.risk", "--date", HINDCAST_DAY, "--rain", "observed")
+    run("models.heat", "--date", "today")
+    run("models.heat", "--date", HEAT_DAY, "--source", "era5")
 
 
 def replay() -> None:  # months already downloaded are skipped by --fetch itself
@@ -164,6 +187,11 @@ def check() -> list[str]:
     hindcast = f"flood-observed-{HINDCAST_DAY.replace('-', '')}"
     if not any(r.startswith(hindcast) for r in runs):
         problems.append(f"no hindcast run for {HINDCAST_DAY}")
+    heat = client.get("/v1/wards", params={"hazard": "heat"}).json()
+    hot = [f["properties"] for f in heat["features"] if f["properties"].get("value") is not None]
+    print(f"  heat run: {(heat.get('run') or {}).get('run_id')}, {len(hot)} wards with a value")
+    if len(hot) != 24:
+        problems.append(f"the current heat run has a value for {len(hot)} wards, expected 24")
     if not (ROOT / "web" / "dist" / "index.html").exists():
         problems.append("map not built: cd web && npm ci && npm run build")
     elif client.get("/").status_code != 200:
@@ -177,13 +205,14 @@ STEPS = [
     ("tide", tide_done, tide),
     ("forecast", forecast_done, forecast),
     ("flood", flood_done, flood),
+    ("heat", heat_done, heat),
     ("today", lambda: False, today),
     ("replay", lambda: False, replay),
 ]
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run the Semester 1 demo end to end.")
+    parser = argparse.ArgumentParser(description="Run the demo end to end.")
     parser.add_argument("--force", action="store_true", help="rebuild every step")
     parser.add_argument("--skip-replay", action="store_true", help="leave out Stage 7")
     parser.add_argument("--serve", action="store_true", help="start the map when done")

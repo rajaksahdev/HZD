@@ -19,7 +19,7 @@ pytest
 Then fill in `.env`. The database listens on host port 5433 (set `DB_PORT` to change it).
 No account is needed for the demo; the empty account fields in `.env` are for later stages.
 
-## Run the demo (Semester 1)
+## Run the demo
 
 ```bash
 python -m scripts.demo --serve     # build everything missing, check it, open http://localhost:8000
@@ -27,10 +27,11 @@ python -m scripts.demo --serve     # build everything missing, check it, open ht
 
 `scripts/demo.py` runs every stage below in order: static ward features, IMD rain for each label
 year, Open-Meteo forecasts for 2024-2025, the tide and rain-correction models, the flood model,
-today's risk run, a hindcast of 19 August 2025 and the Stage 7 replays. It then checks that the
+today's flood and heat runs, hindcasts of 19 August 2025 (flood) and 23 October 2025 (heat)
+and the Stage 7 replays. It then checks that the
 API answers for all 24 wards and that the map is built. Steps already built are skipped, so an
 interrupted run resumes; `--force` rebuilds all, `--skip-replay` leaves out Stage 7. The first
-run downloads about 225 MB and takes about 20 minutes; if a download fails, run it again. Reports from a demo run go to `data/demo/`.
+run downloads about 265 MB and takes about 30 minutes; if a download fails, run it again. Reports from a demo run go to `data/demo/`.
 Results and limits of the semester: `docs/report_sem1.md`.
 
 ## Data pipeline (Stage 1)
@@ -180,6 +181,29 @@ python -m models.replay --report docs/replay.md    # replay 5 flood days, save T
   it also warns on 66% of monsoon days. The heavy-rain rule caught 10 of 16 at 3 days while
   warning on 10% of days.
 
+## Heat stress (Stage 9)
+
+```bash
+python -m pipelines.run --start 2024-01-31 --end 2025-12-31 --sources openmeteo  # full years
+python -m models.heat --fetch 1991 2025          # ERA5 through Open-Meteo, no account needed
+python -m models.heat --train 2024-02-01 2024-07-31 --validate 2024-08-01 2024-12-31 \
+    --test 2025-01-01 2025-12-31 --report docs/heat.md
+python -m models.heat --date today               # heat level per ward -> PostGIS (TEST)
+python -m models.heat --date 2025-10-23 --source era5   # a past hot day from ERA5 (TEST)
+```
+
+- **Index:** apparent temperature (Steadman, shade), from temperature, humidity and wind; the
+  daily maximum over the IST day.
+- **Levels:** yellow, orange and red from the 90th, 95th and 99th percentiles of ERA5 1991-2020
+  over Mumbai (36.9, 37.8 and 39.4 °C). Provisional until Stage 13.
+- **Forecast:** ECMWF, GFS and ICON, quantile-mapped to ERA5; the way to combine them is chosen
+  on August-December 2024 and scored once on 2025. Results and limits: `docs/heat.md`.
+- **Map:** the Flood / Heat switch (or `/?hazard=heat`) shows the heat level and the "feels
+  like" maximum per ward. The API takes `hazard=heat` on `/v1/wards`, `/v1/risk`,
+  `/v1/wards/{id}/risk` and `/v1/runs`; flood stays the default.
+- **City scale:** ERA5 has two land cells over Mumbai, so wards differ little. Ward-level heat
+  needs land-surface temperature (later stage).
+
 ## Layout
 
 ```
@@ -188,12 +212,12 @@ pipelines/  raw store, pilot grid, one fetcher per source, runner, QC checks, fa
 scripts/    load_wards.py, demo.py (the Semester 1 demo end to end)
 models/     forecast.py (bias correction and skill scores), tide.py (harmonic tide),
             flood.py (XGBoost flood model), risk.py (risk run for every ward -> PostGIS),
-            replay.py (past flood days as if live, lead time)
+            replay.py (past flood days as if live, lead time), heat.py (heat stress)
 web/        the map (React + MapLibre)
 assistant/  later stages
 labels/     flood_events.csv, the hand-kept flood label table
 docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md,
-            flood_model.md, replay.md, report_sem1.md (Semester 1 report)
+            flood_model.md, replay.md, report_sem1.md (Semester 1 report), heat.md
 data/       raw and processed files, not committed
 ```
 

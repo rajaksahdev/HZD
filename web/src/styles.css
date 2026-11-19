@@ -60,7 +60,7 @@ body,
   right: 60px;
   padding: 10px 14px;
   background: var(--alarm);
-  color: #fff;
+  color: var(--bg);
   font-weight: 600;
   border-radius: 6px;
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
@@ -106,7 +106,7 @@ h2 {
 
 .badge.test {
   background: #1565c0;
-  color: #fff;
+  color: var(--bg);
 }
 
 .field {
@@ -181,7 +181,7 @@ select {
 .chip {
   padding: 2px 8px;
   border-radius: 10px;
-  color: #fff;
+  color: var(--bg);
   font-size: 0.8rem;
 }
 
@@ -247,4 +247,25 @@ footer {
     right: 50px;
     font-size: 0.85rem;
   }
+}
+
+/* Hazard switch (Stage 9) */
+.toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 4px 0 12px;
+}
+.toggle button {
+  font: inherit;
+  padding: 6px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.toggle button[aria-pressed="true"] {
+  background: var(--text);
+  color: var(--bg);
 }

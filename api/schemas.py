@@ -8,7 +8,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"  # 1.1: WardRisk.value and unit (Stage 9)
 
 
 class Hazard(StrEnum):
@@ -61,6 +61,8 @@ class WardRisk(_Base):
     run_id: str
     data_age_minutes: int | None = Field(default=None, ge=0)
     degraded: bool = False  # true when a fallback (stale data, threshold rules) produced this
+    value: float | None = None  # the measured index behind the level, e.g. 38.2 for heat
+    unit: str | None = Field(default=None, max_length=16)  # unit of value, e.g. "°C"
 
     @model_validator(mode="after")
     def _window(self):

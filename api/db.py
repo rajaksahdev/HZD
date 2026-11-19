@@ -56,6 +56,8 @@ class WardRiskRow(Base):
     )
     data_age_minutes: Mapped[int | None] = mapped_column(Integer)
     degraded: Mapped[bool] = mapped_column(Boolean, default=False)
+    value: Mapped[float | None] = mapped_column(Float)  # Stage 9: e.g. apparent temperature
+    unit: Mapped[str | None] = mapped_column(String(16))
 
 
 class WardStatic(Base):
@@ -90,9 +92,17 @@ LINK_RUNS = text(
 )
 
 
+# Stage 9 added value and unit to ward_risk; add them to a table created before that.
+ADD_VALUE = text(
+    "ALTER TABLE ward_risk ADD COLUMN IF NOT EXISTS value double precision, "
+    "ADD COLUMN IF NOT EXISTS unit varchar(16)"
+)
+
+
 def init_db() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
         conn.execute(LINK_RUNS)
+        conn.execute(ADD_VALUE)

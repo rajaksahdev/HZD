@@ -19,7 +19,14 @@ def test_rain_jobs_cover_every_label_year_and_both_forecast_seasons():
 
 def test_steps_run_inputs_before_models_before_runs():
     names = [name for name, _, _ in demo.STEPS]
-    assert names == ["static", "rain", "tide", "forecast", "flood", "today", "replay"]
+    assert names == ["static", "rain", "tide", "forecast", "flood", "heat", "today", "replay"]
+
+
+def test_heat_split_runs_forward_in_time():
+    periods = [(date.fromisoformat(a), date.fromisoformat(b)) for _, a, b in demo.HEAT_SPLIT]
+    for (_, end), (start, _) in zip(periods, periods[1:], strict=False):
+        assert end < start
+    assert demo.HEAT_DATA[0] < periods[0][0] and periods[-1][1] <= demo.HEAT_DATA[1]
 
 
 def test_demo_reports_never_overwrite_committed_docs():

@@ -1,13 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 
-// Severity colours. The bands match SEVERITY_BANDS in models/risk.py (provisional until Stage 13).
+// Severity colours. Flood bands match SEVERITY_BANDS in models/risk.py; heat bands are the
+// ERA5 1991-2020 percentiles in models/heat.py. Both provisional until Stage 13.
 const LEVELS = [
-  { key: "red", label: "Red", range: "0.75 and above", color: "#c62828" },
-  { key: "orange", label: "Orange", range: "0.50 to 0.75", color: "#ef6c00" },
-  { key: "yellow", label: "Yellow", range: "0.25 to 0.50", color: "#f9a825" },
-  { key: "green", label: "Green", range: "below 0.25", color: "#2e7d32" },
+  { key: "red", label: "Red", color: "#c62828" },
+  { key: "orange", label: "Orange", color: "#ef6c00" },
+  { key: "yellow", label: "Yellow", color: "#f9a825" },
+  { key: "green", label: "Green", color: "#2e7d32" },
 ];
+const HAZARDS = {
+  flood: {
+    title: "flood risk",
+    ranges: { red: "probability 0.75 and above", orange: "0.50 to 0.75", yellow: "0.25 to 0.50", green: "below 0.25" },
+  },
+  heat: {
+    title: "heat stress",
+    ranges: {
+      red: "99th percentile and above",
+      orange: "95th to 99th",
+      yellow: "90th to 95th",
+      green: "below the 90th",
+    },
+  },
+};
 const NO_DATA = "#9e9e9e";
 const COLOR = Object.fromEntries(LEVELS.map((l) => [l.key, l.color]));
 const STALE_MINUTES = 180; // same as api/main.py
@@ -41,6 +57,7 @@ function rainLabel(source, short = false) {
     return short ? "replay, observed" : "IMD observed, used as a perfect forecast (replay)";
   if (source === "observed") return short ? "observed" : "IMD observed (hindcast)";
   if (source === "forecast") return short ? "forecast" : "Corrected forecast";
+  if (source === "era5") return short ? "ERA5" : "ERA5 reanalysis (hindcast)";
   return source;
 }
 
@@ -55,7 +72,10 @@ export default function App() {
   const mapBox = useRef(null);
   const map = useRef(null);
   const [runs, setRuns] = useState([]);
-  // ?run=<run_id> opens a given run, so a past event can be linked to directly.
+  // ?hazard=heat&run=<run_id> opens a given run, so a past event can be linked to directly.
+  const [hazard, setHazard] = useState(() =>
+    new URLSearchParams(location.search).get("hazard") === "heat" ? "heat" : "flood",
+  );
   const [runId, setRunId] = useState(() => new URLSearchParams(location.search).get("run") || "");
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -65,9 +85,11 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
+      const q = new URLSearchParams({ hazard });
+      if (runId) q.set("run_id", runId);
       const [runList, wards] = await Promise.all([
-        getJson("/v1/runs"),
-        getJson(runId ? `/v1/wards?run_id=${encodeURIComponent(runId)}` : "/v1/wards"),
+        getJson(`/v1/runs?hazard=${hazard}&limit=50`),
+        getJson(`/v1/wards?${q}`),
       ]);
       setRuns(runList);
       setData(wards);
@@ -75,14 +97,23 @@ export default function App() {
     } catch (e) {
       setError(`Cannot load risk: ${e.message}`);
     }
-  }, [runId]);
+  }, [runId, hazard]);
 
   useEffect(() => {
     const url = new URL(location.href);
     if (runId) url.searchParams.set("run", runId);
     else url.searchParams.delete("run");
+    if (hazard === "heat") url.searchParams.set("hazard", "heat");
+    else url.searchParams.delete("hazard");
     history.replaceState(null, "", url);
-  }, [runId]);
+  }, [runId, hazard]);
+
+  const switchHazard = (next) => {
+    if (next === hazard) return;
+    setHazard(next);
+    setRunId("");
+    setPicked(null);
+  };
 
   useEffect(() => {
     load();
@@ -153,7 +184,7 @@ export default function App() {
     if (!ready) return undefined;
     const onClick = async (e) => {
       const { lat, lng } = e.lngLat;
-      const q = new URLSearchParams({ lat: lat.toFixed(5), lon: lng.toFixed(5) });
+      const q = new URLSearchParams({ lat: lat.toFixed(5), lon: lng.toFixed(5), hazard });
       if (runId) q.set("run_id", runId);
       try {
         setPicked({ loading: true });
@@ -164,7 +195,7 @@ export default function App() {
     };
     ready.on("click", onClick);
     return () => ready.off("click", onClick);
-  }, [ready, runId]);
+  }, [ready, runId, hazard]);
 
   useEffect(() => {
     if (ready && data) ready.getSource("wards").setData(data);
@@ -173,9 +204,13 @@ export default function App() {
   const run = data?.run;
   const ageMinutes = run ? Math.max(0, Math.floor((now - new Date(run.data_time)) / 60000)) : null;
   const wards = (data?.features || []).map((f) => f.properties);
-  const ranked = [...wards].sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1));
-  const alarming = (data?.warnings || []).filter((w) => w.startsWith("Flood risk"));
-  const otherWarnings = (data?.warnings || []).filter((w) => !w.startsWith("Flood risk"));
+  const isHeat = hazard === "heat";
+  const score = (w) => (isHeat ? w.value : w.probability) ?? -Infinity;
+  const ranked = [...wards].sort((a, b) => score(b) - score(a));
+  const isAlarm = (w) => /^\w+ risk (RED|ORANGE):/.test(w);
+  const alarming = (data?.warnings || []).filter(isAlarm);
+  const otherWarnings = (data?.warnings || []).filter((w) => !isAlarm(w));
+  const ranges = HAZARDS[hazard].ranges;
 
   return (
     <div className="layout">
@@ -193,9 +228,17 @@ export default function App() {
 
       <aside className="panel">
         <header>
-          <h1>HazardLens flood risk</h1>
+          <h1>HazardLens {HAZARDS[hazard].title}</h1>
           {run?.is_test && <span className="badge test">TEST</span>}
         </header>
+
+        <div className="toggle" role="group" aria-label="Hazard">
+          {Object.keys(HAZARDS).map((h) => (
+            <button key={h} type="button" aria-pressed={h === hazard} onClick={() => switchHazard(h)}>
+              {h === "flood" ? "Flood" : "Heat"}
+            </button>
+          ))}
+        </div>
 
         {error && <p className="error">{error}</p>}
 
@@ -216,8 +259,14 @@ export default function App() {
           <dl className="facts">
             <dt>Valid for</dt>
             <dd>{ist(run.valid_from, false)} (IST day)</dd>
-            <dt>Rain from</dt>
+            <dt>{isHeat ? "Inputs" : "Rain from"}</dt>
             <dd>{rainLabel(run.rain_source)}</dd>
+            {isHeat && run.note && (
+              <>
+                <dt>Levels</dt>
+                <dd>{run.note}</dd>
+              </>
+            )}
             <dt>Data age</dt>
             <dd className={ageMinutes > STALE_MINUTES ? "stale" : ""}>
               {ageText(ageMinutes)} (newest input {ist(run.data_time)})
@@ -246,7 +295,9 @@ export default function App() {
               {picked.risks.length === 0 && <span className="muted"> no risk in this run</span>}
               {picked.risks.map((r) => (
                 <span key={r.hazard} className="chip" style={{ background: COLOR[r.severity] }}>
-                  {r.hazard} {r.severity} · p {r.probability.toFixed(2)} · trust {r.trust}
+                  {r.hazard} {r.severity} ·{" "}
+                  {r.value != null ? `${r.value.toFixed(1)} ${r.unit || ""}` : `p ${r.probability.toFixed(2)}`} ·
+                  trust {r.trust}
                 </span>
               ))}
             </div>
@@ -259,7 +310,7 @@ export default function App() {
             {LEVELS.map((l) => (
               <li key={l.key}>
                 <span className="swatch" style={{ background: l.color }} />
-                {l.label} <span className="muted">probability {l.range}</span>
+                {l.label} <span className="muted">{ranges[l.key]}</span>
               </li>
             ))}
             <li>
@@ -276,7 +327,7 @@ export default function App() {
               <tr>
                 <th>Ward</th>
                 <th>Level</th>
-                <th className="num">Probability</th>
+                <th className="num">{isHeat ? "Feels like (max)" : "Probability"}</th>
               </tr>
             </thead>
             <tbody>
@@ -287,7 +338,15 @@ export default function App() {
                     <span className="swatch" style={{ background: COLOR[w.severity] || NO_DATA }} />
                     {w.severity || "—"}
                   </td>
-                  <td className="num">{w.probability != null ? w.probability.toFixed(2) : "—"}</td>
+                  <td className="num">
+                    {isHeat
+                      ? w.value != null
+                        ? `${w.value.toFixed(1)} ${w.unit || ""}`
+                        : "—"
+                      : w.probability != null
+                        ? w.probability.toFixed(2)
+                        : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
