@@ -92,9 +92,14 @@ def imd_at_wards(day: date) -> pd.Series | None:
     path = store.clean_path("imd", day)
     if not path.exists():
         return None
-    points = ward_points()
     with xr.open_dataset(path) as ds:
         field = ds["precipitation"].isel(time=0).load()
+    return at_wards(field)
+
+
+def at_wards(field: xr.DataArray) -> pd.Series:
+    """Sample a (lat, lon) field on the pilot grid at each ward's point."""
+    points = ward_points()
     lat = xr.DataArray(points["lat"].values, dims="ward")
     lon = xr.DataArray(points["lon"].values, dims="ward")
     values = field.interp(lat=lat, lon=lon).values
@@ -103,9 +108,13 @@ def imd_at_wards(day: date) -> pd.Series | None:
     return pd.Series(values, index=points.index, dtype=float)
 
 
-def rain_features(day: date, ward_id: str) -> dict | None:
-    """The three rain features for one ward-day, or None if an IMD day is missing."""
-    needed = {offset: imd_at_wards(day + timedelta(days=offset)) for offset in (-3, -2, -1, 0, 1)}
+def rain_features(day: date, ward_id: str, rain=None) -> dict | None:
+    """The three rain features for one ward-day, or None if a rain day is missing.
+
+    `rain(day)` returns rain per ward for the 24 h ending 08:30 IST on `day`; IMD by default.
+    """
+    rain = rain or imd_at_wards
+    needed = {offset: rain(day + timedelta(days=offset)) for offset in (-3, -2, -1, 0, 1)}
     if any(v is None for v in needed.values()):
         return None
     return {
@@ -121,17 +130,17 @@ def static_features() -> pd.DataFrame:
     return pd.read_csv(STATIC_PATH).set_index("ward_id")[STATIC]
 
 
-def build(ward_days: pd.DataFrame, tide_model: dict | None = None) -> pd.DataFrame:
+def build(ward_days: pd.DataFrame, tide_model: dict | None = None, rain=None) -> pd.DataFrame:
     """Add feature columns to a table with `date` and `ward_id`. Rows without rain are dropped
-    and listed in `.attrs["dropped"]`."""
+    and listed in `.attrs["dropped"]`. `rain` is passed on to rain_features."""
     tide_model = tide_model or tide.load_model()
     rows, dropped = [], []
     for record in ward_days.to_dict("records"):
-        rain = rain_features(record["date"], record["ward_id"])
-        if rain is None:
+        rain_values = rain_features(record["date"], record["ward_id"], rain)
+        if rain_values is None:
             dropped.append((record["date"], record["ward_id"]))
             continue
-        rows.append({**record, **rain})
+        rows.append({**record, **rain_values})
     table = pd.DataFrame(rows, columns=list(ward_days.columns) + RAIN)
     highs = tide.daily_high(tide_model, sorted(set(table["date"])))
     table["tide_high_m"] = table["date"].map(highs)

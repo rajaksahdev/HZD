@@ -12,6 +12,7 @@ requests
 scikit-learn
 xgboost
 fastapi
+httpx
 uvicorn
 pydantic
 sqlalchemy

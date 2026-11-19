@@ -18,3 +18,5 @@ access date, and the entries marked "confirm" have not been checked yet.
 | Copernicus DEM GLO-30 | Terrain (surface heights, 30 m) | Direct download (AWS open data) | 2026-11-16 | confirm | confirm | `data/raw/dem/` |
 | ESA WorldCover 2021 v200 | Land cover, 10 m | Direct download (AWS open data) | 2026-11-16 | CC BY 4.0 | confirm | `data/raw/worldcover/` |
 | News reports | Flood labels | Web pages, links in `labels/flood_events.csv` | 2026-11-16 | Facts only; no text copied | Link per row | `labels/` |
+| OpenStreetMap tiles | Map background | tile.openstreetmap.org, loaded by the browser | 2026-11-19 | OSM tile usage policy: light use only, attribution shown | © OpenStreetMap contributors | not stored |
+| MapLibre demo fonts | Ward labels on the map | demotiles.maplibre.org, loaded by the browser | 2026-11-19 | confirm | confirm | not stored |

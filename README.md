@@ -118,15 +118,43 @@ python -m models.flood --predict 2025-08-19       # hindcast every ward on a pas
   because the labels have no heavy-rain day on which a ward stayed dry. It needs reviewed
   labels and BMC waterlogging lists before it is better than the rule.
 
+## API and map (Stage 6)
+
+```bash
+python -m pipelines.run --days-back 4 --days-ahead 1 --sources imd,openmeteo
+python -m models.risk --date today --rain forecast         # today's flood risk -> PostGIS
+python -m models.risk --date 2025-08-19 --rain observed    # a past flood day (hindcast, TEST)
+python -m models.risk --list                                # runs in the database
+cd web && npm ci && npm run build && cd ..                  # build the map once (needs Node)
+uvicorn api.main:app --port 8000                            # map at http://localhost:8000
+```
+
+- **Risk run** (`models/risk.py`): the Stage 5 model for every ward for one local (IST) day,
+  saved as a row in `risk_runs` plus one `ward_risk` row per ward. `forecast` mode uses the
+  Stage 4 corrected forecast for the day (IMD for earlier days where published, else the
+  forecast); `observed` mode is a hindcast from IMD. Every run is marked TEST unless
+  `--live` is given in forecast mode. Severity: green below 0.25, yellow from 0.25, orange
+  from 0.5, red from 0.75 (provisional until Stage 13).
+- **API** (`api/main.py`, docs at `/docs`): `GET /v1/risk?lat=&lon=`, `GET /v1/wards/{id}/risk`,
+  `GET /v1/wards` (GeoJSON for the map), `GET /v1/runs`, `GET /v1/health`. Without `run_id`
+  the newest run valid now is used. Every answer carries the data age and the on-screen
+  warnings: TEST data, out of date, stale data (newest input over 3 hours old), wards at
+  orange or red, low trust.
+- **Map** (`web/`, React + MapLibre): wards coloured by severity, a red banner when any ward is
+  orange or red, data age (red when stale), a run picker, and a click anywhere for that
+  place's ward and risk. `?run=<run_id>` opens a given run. For development run
+  `npm run dev` in `web/` (port 5173; set `API_URL` if the API is not on port 8000).
+
 ## Layout
 
 ```
-api/        config, shared schemas (api/schemas.py), database tables
+api/        config, shared schemas (api/schemas.py), database tables, main.py (FastAPI)
 pipelines/  raw store, pilot grid, one fetcher per source, runner, QC checks, fault detector
 scripts/    load_wards.py
 models/     forecast.py (bias correction and skill scores), tide.py (harmonic tide),
-            flood.py (XGBoost flood model)
-assistant/ web/   later stages
+            flood.py (XGBoost flood model), risk.py (risk run for every ward -> PostGIS)
+web/        the map (React + MapLibre)
+assistant/  later stages
 labels/     flood_events.csv, the hand-kept flood label table
 docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md,
             flood_model.md
