@@ -37,4 +37,4 @@ else
   echo "npm not found: install Node.js 20+ and run: cd web && npm ci && npm run build"
 fi
 
-echo "Done. Next: fill in .env, then run: pytest"
+echo "Done. Next: activate .venv, then run: python -m scripts.demo --serve   (and pytest)"

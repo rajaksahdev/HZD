@@ -17,6 +17,21 @@ pytest
 ```
 
 Then fill in `.env`. The database listens on host port 5433 (set `DB_PORT` to change it).
+No account is needed for the demo; the empty account fields in `.env` are for later stages.
+
+## Run the demo (Semester 1)
+
+```bash
+python -m scripts.demo --serve     # build everything missing, check it, open http://localhost:8000
+```
+
+`scripts/demo.py` runs every stage below in order: static ward features, IMD rain for each label
+year, Open-Meteo forecasts for 2024-2025, the tide and rain-correction models, the flood model,
+today's risk run, a hindcast of 19 August 2025 and the Stage 7 replays. It then checks that the
+API answers for all 24 wards and that the map is built. Steps already built are skipped, so an
+interrupted run resumes; `--force` rebuilds all, `--skip-replay` leaves out Stage 7. The first
+run downloads about 225 MB and takes about 20 minutes; if a download fails, run it again. Reports from a demo run go to `data/demo/`.
+Results and limits of the semester: `docs/report_sem1.md`.
 
 ## Data pipeline (Stage 1)
 
@@ -170,7 +185,7 @@ python -m models.replay --report docs/replay.md    # replay 5 flood days, save T
 ```
 api/        config, shared schemas (api/schemas.py), database tables, main.py (FastAPI)
 pipelines/  raw store, pilot grid, one fetcher per source, runner, QC checks, fault detector
-scripts/    load_wards.py
+scripts/    load_wards.py, demo.py (the Semester 1 demo end to end)
 models/     forecast.py (bias correction and skill scores), tide.py (harmonic tide),
             flood.py (XGBoost flood model), risk.py (risk run for every ward -> PostGIS),
             replay.py (past flood days as if live, lead time)
@@ -178,7 +193,7 @@ web/        the map (React + MapLibre)
 assistant/  later stages
 labels/     flood_events.csv, the hand-kept flood label table
 docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md,
-            flood_model.md, replay.md
+            flood_model.md, replay.md, report_sem1.md (Semester 1 report)
 data/       raw and processed files, not committed
 ```
 

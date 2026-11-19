@@ -85,6 +85,7 @@ def fetch_month(year: int, month: int, force: bool = False) -> Path:
             "timezone": "UTC",
         },
         timeout=300,
+        retries=7,  # the archive rate-limits a burst of months; backoff waits up to ~5 minutes
     )
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     path = RAW / f"{year}" / f"{month:02d}" / f"previous_runs_{stamp}.json"

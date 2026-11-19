@@ -9,12 +9,15 @@ IMD's rainfall day ends at 03:00 UTC (08:30 IST) on the stated date.
 
 import contextlib
 import io
+import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import imdlib
 import numpy as np
+import requests
 import xarray as xr
+from imdlib.util import DataNotAvailableError
 
 from api.config import settings
 from pipelines import store
@@ -23,6 +26,7 @@ from pipelines.grid import empty_dataset, regrid
 NAME = "imd"
 YEARLY = settings.raw_dir / NAME / "yearly"
 REALTIME = settings.raw_dir / NAME / "realtime"
+TRIES = 4  # imdpune.gov.in often drops the first connection; backoff waits 10, 20, 40 s
 
 
 def _is_yearly(day: date) -> bool:
@@ -52,11 +56,26 @@ def fetch(day: date, force: bool = False) -> list[Path]:
     folder = YEARLY if _is_yearly(day) else REALTIME
     folder.mkdir(parents=True, exist_ok=True)
     before = _files(folder)
-    with contextlib.redirect_stdout(io.StringIO()):
-        if _is_yearly(day):
-            imdlib.get_data("rain", day.year, day.year, fn_format="yearwise", file_dir=str(folder))
-        else:
-            imdlib.get_real_data("rain", day.isoformat(), day.isoformat(), file_dir=str(folder))
+    for attempt in range(TRIES):
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                if _is_yearly(day):
+                    imdlib.get_data(
+                        "rain", day.year, day.year, fn_format="yearwise", file_dir=str(folder)
+                    )
+                else:
+                    imdlib.get_real_data(
+                        "rain", day.isoformat(), day.isoformat(), file_dir=str(folder)
+                    )
+            break
+        except DataNotAvailableError:
+            return []  # not published yet (or IMD served an empty file): "no data", not an error
+        except (requests.RequestException, OSError):
+            for partial in _files(folder) - before:  # a broken download must not look complete
+                partial.unlink()
+            if attempt == TRIES - 1:
+                raise
+            time.sleep(10 * 2**attempt)
     new = sorted(_files(folder) - before)
     for path in new:
         store.log_download(NAME, day, path, "imdlib (imdpune.gov.in)")
