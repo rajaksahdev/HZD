@@ -96,16 +96,40 @@ CSI) is in `docs/forecast_skill.md`. The learned correction is saved to
 `data/processed/models/rain_quantile_map.json`. The pySTEPS baseline is not run: it needs IMERG
 or GSMaP rain maps, which need accounts.
 
+## Flood model (Stage 5)
+
+```bash
+python -m pipelines.run --start 2005-05-15 --end 2005-10-05 --sources imd   # IMD rain per label year
+python -m models.tide --fit 2023-01-01 2024-12-31 --check 2025-01-01 2025-10-31
+python -m models.flood --test-from 2024 --report docs/flood_model.md
+python -m models.flood --predict 2025-08-19       # hindcast every ward on a past day
+```
+
+- **Tide** (`models/tide.py`): Open-Meteo sea level only starts in 2023, so a harmonic fit on
+  2023-2024 predicts the astronomical tide for any date. Checked on 2025: daily high tide off
+  by about 0.10 m. Storm surge is not included.
+- **Flood model** (`models/flood.py`): XGBoost on IMD rain around the day, the day's high tide
+  and the Stage 3 ward features, one row per labelled ward-day. Scored on held-out years
+  (train before 2024, test 2024-2025) and year by year (each year trained only on earlier
+  years), against a heavy-rain rule. It also counts how often each would warn over a whole
+  monsoon season, which is the honest false-alarm check while all labelled negatives are dry
+  days. Results: `docs/flood_model.md`. Saved model: `data/processed/models/flood_xgb.json`.
+- **Current state:** the model warns on about three times as many days as the heavy-rain rule,
+  because the labels have no heavy-rain day on which a ward stayed dry. It needs reviewed
+  labels and BMC waterlogging lists before it is better than the rule.
+
 ## Layout
 
 ```
 api/        config, shared schemas (api/schemas.py), database tables
 pipelines/  raw store, pilot grid, one fetcher per source, runner, QC checks, fault detector
 scripts/    load_wards.py
-models/     forecast.py (bias correction and skill scores)
+models/     forecast.py (bias correction and skill scores), tide.py (harmonic tide),
+            flood.py (XGBoost flood model)
 assistant/ web/   later stages
 labels/     flood_events.csv, the hand-kept flood label table
-docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md
+docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md,
+            flood_model.md
 data/       raw and processed files, not committed
 ```
 
