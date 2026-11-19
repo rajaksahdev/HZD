@@ -20,3 +20,4 @@ access date, and the entries marked "confirm" have not been checked yet.
 | News reports | Flood labels | Web pages, links in `labels/flood_events.csv` | 2026-11-16 | Facts only; no text copied | Link per row | `labels/` |
 | OpenStreetMap tiles | Map background | tile.openstreetmap.org, loaded by the browser | 2026-11-19 | OSM tile usage policy: light use only, attribution shown | © OpenStreetMap contributors | not stored |
 | MapLibre demo fonts | Ward labels on the map | demotiles.maplibre.org, loaded by the browser | 2026-11-19 | confirm | confirm | not stored |
+| Open-Meteo Previous Runs | Archived forecasts made 1-5 days ahead, for replays | Open API, no key | 2026-11-19 | Free for non-commercial use | confirm | `data/raw/previous_runs/` |

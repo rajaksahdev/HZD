@@ -29,6 +29,21 @@ function ageText(minutes) {
   return `${Math.floor(minutes / 1440)} days`;
 }
 
+// Where a run's rain came from (risk_runs.rain_source), in words.
+function rainLabel(source, short = false) {
+  const lead = /^forecast-lead(\d+)d$/.exec(source || "");
+  if (lead) {
+    const n = Number(lead[1]);
+    const when = n === 0 ? "at 00:00 IST on the day" : `${n} day${n > 1 ? "s" : ""} ahead`;
+    return short ? `replay, ${n === 0 ? "on the day" : when}` : `Archived forecast issued ${when} (replay)`;
+  }
+  if (source === "observed (replay)")
+    return short ? "replay, observed" : "IMD observed, used as a perfect forecast (replay)";
+  if (source === "observed") return short ? "observed" : "IMD observed (hindcast)";
+  if (source === "forecast") return short ? "forecast" : "Corrected forecast";
+  return source;
+}
+
 async function getJson(url) {
   const resp = await fetch(url);
   const body = await resp.json().catch(() => ({}));
@@ -190,7 +205,7 @@ export default function App() {
             <option value="">Current (newest run valid now)</option>
             {runs.map((r) => (
               <option key={r.run_id} value={r.run_id}>
-                {r.valid_from ? ist(r.valid_from, false) : "?"} · {r.rain_source}
+                {r.valid_from ? ist(r.valid_from, false) : "?"} · {rainLabel(r.rain_source, true)}
                 {r.is_test ? " · TEST" : ""}
               </option>
             ))}
@@ -202,7 +217,7 @@ export default function App() {
             <dt>Valid for</dt>
             <dd>{ist(run.valid_from, false)} (IST day)</dd>
             <dt>Rain from</dt>
-            <dd>{run.rain_source === "observed" ? "IMD observed (hindcast)" : "Corrected forecast"}</dd>
+            <dd>{rainLabel(run.rain_source)}</dd>
             <dt>Data age</dt>
             <dd className={ageMinutes > STALE_MINUTES ? "stale" : ""}>
               {ageText(ageMinutes)} (newest input {ist(run.data_time)})

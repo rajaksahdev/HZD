@@ -145,6 +145,26 @@ uvicorn api.main:app --port 8000                            # map at http://loca
   place's ward and risk. `?run=<run_id>` opens a given run. For development run
   `npm run dev` in `web/` (port 5173; set `API_URL` if the API is not on port 8000).
 
+## Replay mode (Stage 7)
+
+```bash
+python -m models.replay --fetch 2024-05 2024-10    # archived forecasts, one request per month
+python -m models.replay --fetch 2025-05 2025-10    # (Open-Meteo rate-limits: wait if you get 429)
+python -m models.replay --report docs/replay.md    # replay 5 flood days, save TEST runs, lead time
+```
+
+- **Forecast replays** (8 Jul 2024, 26 May 2025, 19 Aug 2025): each flood day is re-run as if
+  issued 0 to 3 days before 00:00 IST, using for every hour only an archived forecast made at
+  least that far ahead (Open-Meteo Previous Runs archive, from 2024) and IMD rain only once it
+  would have been published.
+- **Observed replays** (26 Jul 2005, 18 Jul 2021): no forecasts made days ahead are archived for
+  those years, so they use observed IMD rain and measure no lead time.
+- Every replay is saved as a TEST run (`replay-YYYYMMDD-leadNd`, `replay-YYYYMMDD-observed`);
+  open one on the map with `/?run=<run id>`. Results and limits: `docs/replay.md`.
+- **Result:** the model warned all 16 reported ward-days 3 days ahead, but replayed 3 days ahead
+  it also warns on 66% of monsoon days. The heavy-rain rule caught 10 of 16 at 3 days while
+  warning on 10% of days.
+
 ## Layout
 
 ```
@@ -152,12 +172,13 @@ api/        config, shared schemas (api/schemas.py), database tables, main.py (F
 pipelines/  raw store, pilot grid, one fetcher per source, runner, QC checks, fault detector
 scripts/    load_wards.py
 models/     forecast.py (bias correction and skill scores), tide.py (harmonic tide),
-            flood.py (XGBoost flood model), risk.py (risk run for every ward -> PostGIS)
+            flood.py (XGBoost flood model), risk.py (risk run for every ward -> PostGIS),
+            replay.py (past flood days as if live, lead time)
 web/        the map (React + MapLibre)
 assistant/  later stages
 labels/     flood_events.csv, the hand-kept flood label table
 docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md,
-            flood_model.md
+            flood_model.md, replay.md
 data/       raw and processed files, not committed
 ```
 

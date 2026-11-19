@@ -127,11 +127,23 @@ class RainInputs:
 # --- The run ------------------------------------------------------------------------------
 
 
-def compute(day: date, mode: str, now: datetime | None = None, live: bool = False) -> dict:
-    """Run the flood model for every ward. Returns the run record and validated WardRisk rows."""
+def compute(
+    day: date,
+    mode: str,
+    now: datetime | None = None,
+    live: bool = False,
+    rain=None,
+    run_id: str | None = None,
+    rain_source: str | None = None,
+) -> dict:
+    """Run the flood model for every ward. Returns the run record and validated WardRisk rows.
+
+    `now` is the issue time. A replay passes its own `rain` provider (same interface as
+    RainInputs), a fixed `run_id` and a `rain_source` label, and the simulated issue time.
+    """
     now = now or datetime.now(UTC)
     model, meta = flood.load_final()
-    rain = RainInputs(day, mode)
+    rain = rain or RainInputs(day, mode)
     wards = pd.DataFrame([(day, w) for w in flood.ward_points().index], columns=["date", "ward_id"])
     table = flood.build(wards, rain=rain)
     missing = sorted(w for _, w in table.attrs["dropped"])
@@ -143,7 +155,7 @@ def compute(day: date, mode: str, now: datetime | None = None, live: bool = Fals
         )
     probability = model.predict_proba(table[meta["features"]])[:, 1]
     data_time = rain.data_time()
-    run_id = f"flood-{mode}-{day:%Y%m%d}-{now:%Y%m%dT%H%M%SZ}"
+    run_id = run_id or f"flood-{mode}-{day:%Y%m%d}-{now:%Y%m%dT%H%M%SZ}"
     valid_from, valid_to = valid_window(day)
     age = max(0, int((now - data_time).total_seconds() // 60))
     risks = [
@@ -164,7 +176,7 @@ def compute(day: date, mode: str, now: datetime | None = None, live: bool = Fals
         "run_id": run_id,
         "issued_at": now,
         "data_time": data_time,
-        "rain_source": mode,
+        "rain_source": rain_source or mode,
         "model": "flood_xgb " + meta.get("created_at", ""),
         "is_test": not (live and mode == "forecast"),
         "note": f"Rain inputs: {rain.describe()}"[:500],
