@@ -6,8 +6,10 @@ Rain modes:
              itself; earlier days use IMD where it exists, else the forecast.
 
 The probability comes from the Stage 5 model (data/processed/models/flood_xgb.json). Severity
-bands are provisional until the Stage 13 alert rules. Trust is low while no flood label has
-been reviewed and Stage 5 shows the model warning far more often than a heavy-rain rule.
+bands are provisional until the Stage 13 alert rules. Trust is the Stage 11 trust of the rain
+forecast (models/blend.py): how much the forecast models disagree at the ward, the lowest over
+the forecast windows used; observed rain is high trust. Without the Stage 11 model it is low.
+The flood model's own weakness (unreviewed labels) is a separate caveat on the map.
 
 python -m models.risk --date 2025-08-19 --rain observed
 python -m models.risk --date 2026-11-19 --rain forecast
@@ -29,7 +31,7 @@ from sqlalchemy import delete, select
 
 from api.db import RiskRun, SessionLocal, WardRiskRow, init_db
 from api.schemas import Hazard, Severity, Trust, WardRisk
-from models import flood, forecast
+from models import blend, flood, forecast
 from pipelines import store
 from pipelines.grid import target_coords
 
@@ -123,6 +125,20 @@ class RainInputs:
     def describe(self) -> str:
         return ", ".join(f"{w:%d %b} {s}" for w, s in sorted(self.used.items()))
 
+    def trust(self) -> pd.Series | None:
+        """Stage 11 trust per ward over the forecast windows used (None: no blend model)."""
+        fields = [blend.live_window(w) for w, s in self.used.items() if s == "forecast"]
+        if any(f is None for f in fields):
+            return None
+        return blend.ward_trust(fields)
+
+
+def trust_note(trust: pd.Series | None) -> str:
+    if trust is None:
+        return "Trust: low (no Stage 11 blend model)."
+    counts = trust.map(lambda t: t.value).value_counts()
+    return "Trust: " + ", ".join(f"{counts[t.value]} {t.value}" for t in Trust if t.value in counts)
+
 
 # --- The run ------------------------------------------------------------------------------
 
@@ -154,6 +170,7 @@ def compute(
             f"--sources {'imd' if mode == 'observed' else 'imd,openmeteo'}"
         )
     probability = model.predict_proba(table[meta["features"]])[:, 1]
+    trust = rain.trust() if hasattr(rain, "trust") else None
     data_time = rain.data_time()
     run_id = run_id or f"flood-{mode}-{day:%Y%m%d}-{now:%Y%m%dT%H%M%SZ}"
     valid_from, valid_to = valid_window(day)
@@ -166,7 +183,7 @@ def compute(
             valid_to=valid_to,
             probability=round(float(p), 4),
             severity=severity(p),
-            trust=Trust.LOW,
+            trust=Trust.LOW if trust is None else trust[ward],
             run_id=run_id,
             data_age_minutes=age,
         )
@@ -179,7 +196,7 @@ def compute(
         "rain_source": rain_source or mode,
         "model": "flood_xgb " + meta.get("created_at", ""),
         "is_test": not (live and mode == "forecast"),
-        "note": f"Rain inputs: {rain.describe()}"[:500],
+        "note": f"Rain inputs: {rain.describe()}. {trust_note(trust)}"[:500],
     }
     return {"run": run, "risks": risks, "features": table}
 

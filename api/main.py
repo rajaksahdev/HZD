@@ -92,11 +92,15 @@ RUN_COMMAND = {
     Hazard.FLOOD: "python -m models.risk --date today",
     Hazard.HEAT: "python -m models.heat --date today",
 }
-LOW_TRUST = {
+CAVEAT = {  # shown with every run of the hazard, whatever the forecast trust
     Hazard.FLOOD: (
-        "Low trust: the flood labels are unreviewed and the model warns far more often "
+        "Provisional: the flood labels are unreviewed and the model warns far more often "
         "than a heavy-rain rule. Treat levels as indicative."
     ),
+}
+LOW_TRUST = {  # Stage 11: trust is how much the forecast models disagree
+    Hazard.FLOOD: "the rain forecast models disagree",
+    Hazard.HEAT: "the temperature forecast models disagree",
 }
 
 
@@ -127,8 +131,13 @@ def warnings_for(
     degraded = [r.ward_id for r in risks if r.degraded]
     if degraded:
         out.append(f"Fallback rules used for {len(degraded)} wards.")
-    if any(r.trust.value == "low" for r in risks):
-        out.append(LOW_TRUST.get(hazard, "Low trust: treat levels as indicative."))
+    if hazard in CAVEAT and any(r.severity != Severity.GREEN for r in risks):
+        out.append(CAVEAT[hazard])
+    low = sorted(r.ward_id for r in risks if r.trust.value == "low")
+    if low:
+        listed = ", ".join(low) if len(low) <= 8 else f"{len(low)} wards"
+        reason = LOW_TRUST.get(hazard, "the inputs are uncertain")
+        out.append(f"Low trust in {listed}: {reason}. Treat levels there as indicative.")
     return out
 
 

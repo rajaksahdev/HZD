@@ -11,6 +11,7 @@ cdsapi
 requests
 scikit-learn
 xgboost
+matplotlib
 fastapi
 httpx
 uvicorn

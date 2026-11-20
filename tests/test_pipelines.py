@@ -72,8 +72,28 @@ def test_openmeteo_harmonize_puts_points_in_the_right_cells(tmp_data):
     store.write_raw("openmeteo", DAY, "forecast_x.json", json.dumps(points).encode(), "test")
 
     ds = openmeteo.harmonize(DAY)
-    assert dict(ds.sizes) == {"time": 24, "lat": 6, "lon": 5, "model": 3}
+    n = len(openmeteo.MODELS)
+    assert dict(ds.sizes) == {"time": 24, "lat": 6, "lon": 5, "model": n}
     cell = ds["temperature_2m"].sel(model="ecmwf_ifs025", lat=19.15, lon=72.9).isel(time=0)
     assert float(cell) == pytest.approx(19.15 * 10 + 72.9, abs=1e-3)
     assert int(ds["precipitation"].isnull().sum()) == 24
     assert ds["wind_speed_10m"].attrs["units"] == "m s-1"
+
+
+def test_openmeteo_harmonize_keeps_only_the_models_an_older_file_has(tmp_data):
+    lats, lons = openmeteo._points()
+    times = [f"2025-07-20T{h:02d}:00" for h in range(24)]
+    older = ["ecmwf_ifs025", "gfs_seamless", "icon_seamless"]  # files fetched before Stage 11
+    points = [
+        {
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": {"time": times}
+            | {f"{v}_{m}": [1.0] * 24 for v in openmeteo.VARIABLES for m in older},
+        }
+        for lat, lon in zip(lats, lons, strict=True)
+    ]
+    store.write_raw("openmeteo", DAY, "forecast_x.json", json.dumps(points).encode(), "test")
+    ds = openmeteo.harmonize(DAY)
+    assert list(ds["model"].values) == older
+    assert int(ds["precipitation"].isnull().sum()) == 0

@@ -28,7 +28,8 @@ python -m scripts.demo --serve     # build everything missing, check it, open ht
 `scripts/demo.py` runs every stage below in order: static ward features, IMD rain for each label
 year, Open-Meteo forecasts for 2024-2025, the tide and rain-correction models, the flood model,
 today's flood and heat runs, hindcasts of 19 August 2025 (flood) and 23 October 2025 (heat),
-the Stage 7 replays and the Stage 10 landslide model. It then checks that the
+the Stage 7 replays, the Stage 10 landslide model and the Stage 11 blend and trust levels. It then
+checks that the
 API answers for all 24 wards and that the map is built. Steps already built are skipped, so an
 interrupted run resumes; `--force` rebuilds all, `--skip-replay` leaves out Stage 7. The first
 run downloads about 265 MB and takes about 30 minutes; if a download fails, run it again. Reports from a demo run go to `data/demo/`.
@@ -48,7 +49,7 @@ python -m pipelines.run --start 2025-07-20 --no-fetch         # rebuild clean da
 
 | Source | Key | What | Account |
 |---|---|---|---|
-| Open-Meteo | `openmeteo` | Hourly forecast from 3 models: rain, temperature, humidity, wind | none |
+| Open-Meteo | `openmeteo` | Hourly forecast from 6 models: rain, temperature, humidity, wind | none |
 | Open-Meteo marine | `tide` | Hourly sea level near Mumbai harbour | none |
 | CHIRPS v3 | `chirps` | Daily rainfall, 0.05°, about a month behind | none |
 | IMD gridded | `imd` | Daily rainfall, 0.25° | none |
@@ -155,7 +156,8 @@ uvicorn api.main:app --port 8000                            # map at http://loca
   `GET /v1/wards` (GeoJSON for the map), `GET /v1/runs`, `GET /v1/health`. Without `run_id`
   the newest run valid now is used. Every answer carries the data age and the on-screen
   warnings: TEST data, out of date, stale data (newest input over 3 hours old), wards at
-  orange or red, low trust.
+  orange or red, the flood model caveat (when any ward is above green), and the wards at low
+  trust (Stage 11).
 - **Map** (`web/`, React + MapLibre): wards coloured by severity, a red banner when any ward is
   orange or red, data age (red when stale), a run picker, and a click anywhere for that
   place's ward and risk. `?run=<run_id>` opens a given run. For development run
@@ -224,6 +226,33 @@ python -m models.landslide --report docs/landslide.md    # 1 km cells, spatial s
   `docs/landslide.md`. Saved: `data/processed/models/landslide_xgb.json` and the map
   `data/processed/landslide/susceptibility.tif`. Not on the web map yet.
 
+## Blending and bust detection (Stage 11)
+
+```bash
+python -m pipelines.run --start 2022-05-31 --end 2022-09-30 --sources imd   # and 2023
+python -m models.blend --fetch 2021 2025           # archived forecasts, June-September, by month
+python -m models.blend --report docs/blend.md      # fit, score, reliability plot, saved model
+```
+
+- **Archive:** Open-Meteo's stitched short-lead forecasts (about a day ahead) from GFS and JMA
+  (2021), UKMO (2022), ECMWF, ICON and GEM (2023), scored against IMD for June-September
+  2021-2025.
+- **Blend:** each model quantile-mapped to IMD, then weighted by skill. **Probability** of
+  moderate and heavy rain from a logistic regression; the reliability plot is
+  `docs/blend_reliability.svg`.
+- **Trust:** high, medium or low from the spread of the corrected models. **Bust:** forecast and
+  IMD two or more rain classes apart. Scored leaving one monsoon out at a time, plus a forward
+  check on 2025.
+- **Result:** low trust busts more often (4.7% of cell-days against 2.8% at high trust), but the
+  ranges overlap and the 2025 forward check shows little difference. For heavy-rain forecasts the
+  gap is clearer: 4% bust at high trust, 9% at medium, 17% at low. The blend's rain amount is no
+  better than Stage 4's, so flood risk keeps Stage 4's amount. Spread does not grade heat
+  forecasts, so heat keeps a fixed trust. Details and limits: `docs/blend.md`.
+- **In the runs:** every flood risk run sets each ward's trust from the forecast windows it used
+  (observed rain is high trust), and the API names low-trust wards. Live forecasts now fetch all
+  six models; Stages 4 and 9 still use ECMWF, GFS and ICON. Saved model:
+  `data/processed/models/blend.json`.
+
 ## Layout
 
 ```
@@ -233,13 +262,14 @@ scripts/    load_wards.py, demo.py (the Semester 1 demo end to end)
 models/     forecast.py (bias correction and skill scores), tide.py (harmonic tide),
             flood.py (XGBoost flood model), risk.py (risk run for every ward -> PostGIS),
             replay.py (past flood days as if live, lead time), heat.py (heat stress),
-            landslide.py (landslide susceptibility, MMR and Raigad)
+            landslide.py (landslide susceptibility, MMR and Raigad), blend.py (model blend,
+            trust levels, bust detection)
 web/        the map (React + MapLibre)
 assistant/  later stages
 labels/     flood_events.csv, the hand-kept flood label table
 docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md,
             flood_model.md, replay.md, report_sem1.md (Semester 1 report), heat.md,
-            landslide.md
+            landslide.md, blend.md and blend_reliability.svg
 data/       raw and processed files, not committed
 ```
 

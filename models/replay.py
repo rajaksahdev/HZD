@@ -35,7 +35,7 @@ import pandas as pd
 import xarray as xr
 
 from api.config import settings
-from models import flood, forecast, risk, tide
+from models import blend, flood, forecast, risk, tide
 from pipelines import labels, store
 from pipelines.grid import target_coords
 from pipelines.sources import openmeteo
@@ -162,7 +162,7 @@ class ReplayRain:
     """Rain per ward as it was known at `issued`: IMD once published, else archived forecast."""
 
     def __init__(self, issued: datetime):
-        self.issued, self.used, self._cache = issued, {}, {}
+        self.issued, self.used, self._cache, self._fields = issued, {}, {}, {}
 
     def __call__(self, window: date) -> pd.Series | None:
         if window in self._cache:
@@ -183,8 +183,14 @@ class ReplayRain:
                 )
                 values = flood.at_wards(field)
                 self.used[window] = "forecast"
+                self._fields[window] = blend.from_api_models(fc, forecast.MODELS)
         self._cache[window] = values
         return values
+
+    def trust(self) -> pd.Series | None:
+        """Stage 11 trust from the archived runs used (three models, limits learned a day
+        ahead: see docs/blend.md)."""
+        return blend.ward_trust([self._fields[w] for w, s in self.used.items() if s == "forecast"])
 
     def data_time(self) -> datetime:
         times = [datetime.combine(w, risk.IMD_DAY_END) for w, s in self.used.items() if s == "IMD"]

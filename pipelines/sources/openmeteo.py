@@ -25,7 +25,15 @@ NAME = "openmeteo"
 RECENT_URL = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
 RECENT_DAYS = 80  # the live endpoint keeps roughly three months of past days
-MODELS = ["ecmwf_ifs025", "gfs_seamless", "icon_seamless"]
+# The first three feed Stages 4 and 9. All six feed the Stage 11 blend and its trust levels.
+MODELS = [
+    "ecmwf_ifs025",
+    "gfs_seamless",
+    "icon_seamless",
+    "jma_seamless",
+    "ukmo_seamless",
+    "gem_seamless",
+]
 VARIABLES = {  # API name -> unit after harmonising
     "precipitation": "mm",
     "temperature_2m": "degC",
@@ -107,12 +115,14 @@ def harmonize(day: date) -> xr.Dataset | None:
     if not keep:
         return None
     hours = slice(keep[0], keep[-1] + 1)  # a monthly file holds many days; take this one
+    # Files fetched before Stage 11 hold three models; keep only the models a file has.
+    models = [m for m in MODELS if any(k.endswith(f"_{m}") for k in points[0]["hourly"])]
     ds = empty_dataset(all_times[hours])
-    ds = ds.assign_coords(model=MODELS)
-    shape = (len(MODELS), ds.sizes["time"], lats.size, lons.size)
+    ds = ds.assign_coords(model=models)
+    shape = (len(models), ds.sizes["time"], lats.size, lons.size)
     for var, unit in VARIABLES.items():
         cube = np.full(shape, np.nan, dtype="float32")
-        for m, model in enumerate(MODELS):
+        for m, model in enumerate(models):
             for p, point in enumerate(points):  # same order as _points(): lat-major
                 values = point["hourly"].get(f"{var}_{model}")
                 if values is not None:

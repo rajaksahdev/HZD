@@ -71,7 +71,8 @@ REFERENCE = {
     "climatology": "climatology (1991-2020)",
 }
 # Day-ahead scores are in docs/heat.md, but levels are city-scale and the thresholds are not
-# yet tied to health outcomes. Stage 11 replaces this with a trust computed from disagreement.
+# yet tied to health outcomes. Stage 11 tested trust from the spread of the three models and it
+# did not grade heat forecasts (docs/blend.md), so trust stays fixed.
 TRUST = Trust.MEDIUM
 
 

@@ -14,11 +14,13 @@ skipped, so an interrupted run resumes):
   forecast  rain bias correction learned on 2024, scored on 2025 (Stage 4)
   flood     XGBoost flood model (Stage 5)
   heat      ERA5 1991-2025, full-year forecasts 2024-2025, heat levels and correction (Stage 9)
+  blend     archived forecasts 2021-2025 from six models, blend and trust levels (Stage 11),
+            before today's runs so they carry trust
   today     today's data, today's flood and heat runs, and two hindcasts: flood on
             19 Aug 2025, heat on 23 Oct 2025 (Stages 6 and 9)
   replay    archived forecasts and the five replayed flood days (Stage 7)
   landslide landslide catalog, terrain for MMR and Raigad, susceptibility model (Stage 10)
-  check     the API answers for every ward and the map is built
+  check    the API answers for every ward and the map is built
 
 Reports from the demo go to data/demo/, not docs/, so a demo run never changes committed files.
 Needs no accounts. Every run it saves is marked TEST: the demo never passes --live.
@@ -47,6 +49,7 @@ HEAT_SPLIT = (
     ("--test", "2025-01-01", "2025-12-31"),
 )
 FORECAST_SEASONS = (2024, 2025)  # Stage 4: train on 2024, test on 2025
+BLEND_YEARS = (2021, 2025)  # Stage 11: the forecast archive has two or more models from 2021
 RETRY_WAIT = 60  # seconds before retrying a failed step
 REPLAY_MONTHS = (("2024-05", "2024-10"), ("2025-05", "2025-10"))
 
@@ -79,7 +82,8 @@ def static() -> None:
 
 def rain_jobs() -> list[tuple[list[str], Path]]:
     """(pipelines.run arguments, a file that exists once the job is done)."""
-    years = sorted(set(label_years()) | set(FORECAST_SEASONS))
+    blend_years = range(BLEND_YEARS[0], BLEND_YEARS[1] + 1)
+    years = sorted(set(label_years()) | set(FORECAST_SEASONS) | set(blend_years))
     jobs = []
     for year in years:
         start, end = date(year, 5, 15), date(year, 10, 5)
@@ -160,6 +164,15 @@ def landslide() -> None:
     run("models.landslide", "--report", (OUT / "landslide.md").as_posix())
 
 
+def blend_done() -> bool:
+    return (MODELS / "blend.json").exists()
+
+
+def blend() -> None:  # months already downloaded are skipped by --fetch itself
+    run("models.blend", "--fetch", *(str(y) for y in BLEND_YEARS))
+    run("models.blend", "--report", (OUT / "blend.md").as_posix())
+
+
 def replay() -> None:  # months already downloaded are skipped by --fetch itself
     for first, last in REPLAY_MONTHS:
         run("models.replay", "--fetch", first, last)
@@ -216,6 +229,7 @@ STEPS = [
     ("forecast", forecast_done, forecast),
     ("flood", flood_done, flood),
     ("heat", heat_done, heat),
+    ("blend", blend_done, blend),
     ("today", lambda: False, today),
     ("replay", lambda: False, replay),
     ("landslide", landslide_done, landslide),
