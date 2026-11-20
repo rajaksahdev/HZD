@@ -17,6 +17,7 @@ skipped, so an interrupted run resumes):
   today     today's data, today's flood and heat runs, and two hindcasts: flood on
             19 Aug 2025, heat on 23 Oct 2025 (Stages 6 and 9)
   replay    archived forecasts and the five replayed flood days (Stage 7)
+  landslide landslide catalog, terrain for MMR and Raigad, susceptibility model (Stage 10)
   check     the API answers for every ward and the map is built
 
 Reports from the demo go to data/demo/, not docs/, so a demo run never changes committed files.
@@ -150,6 +151,15 @@ def today() -> None:  # always runs: today changes every day
     run("models.heat", "--date", HEAT_DAY, "--source", "era5")
 
 
+def landslide_done() -> bool:
+    return (MODELS / "landslide_xgb.json").exists()
+
+
+def landslide() -> None:
+    run("models.landslide", "--fetch")
+    run("models.landslide", "--report", (OUT / "landslide.md").as_posix())
+
+
 def replay() -> None:  # months already downloaded are skipped by --fetch itself
     for first, last in REPLAY_MONTHS:
         run("models.replay", "--fetch", first, last)
@@ -208,6 +218,7 @@ STEPS = [
     ("heat", heat_done, heat),
     ("today", lambda: False, today),
     ("replay", lambda: False, replay),
+    ("landslide", landslide_done, landslide),
 ]
 
 

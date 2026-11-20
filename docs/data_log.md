@@ -14,7 +14,7 @@ access date, and the entries marked "confirm" have not been checked yet.
 | IMD gridded | India rain and temperature grids | `imdlib` | 2026-11-16 | confirm | confirm | `data/raw/imd/` |
 | MOSDAC (INSAT) | Low-latency rainfall | Registration, needs approval | not yet | Research use only; must cite | confirm | `data/raw/mosdac/` |
 | Open-Meteo | Forecasts and tides | Open API, no key | 2026-11-16 | Free for non-commercial use | confirm | `data/raw/openmeteo/` |
-| OpenStreetMap | Roads, drains, shelters | Overpass API | 2026-11-16 (waterways only) | ODbL | © OpenStreetMap contributors | `data/raw/osm/` |
+| OpenStreetMap | Roads, drains, shelters | Overpass API | 2026-11-16 (waterways; main roads, railways and rivers for MMR and Raigad from 2026-11-19) | ODbL | © OpenStreetMap contributors | `data/raw/osm/` |
 | Copernicus DEM GLO-30 | Terrain (surface heights, 30 m) | Direct download (AWS open data) | 2026-11-16 | confirm | confirm | `data/raw/dem/` |
 | ESA WorldCover 2021 v200 | Land cover, 10 m | Direct download (AWS open data) | 2026-11-16 | CC BY 4.0 | confirm | `data/raw/worldcover/` |
 | News reports | Flood labels | Web pages, links in `labels/flood_events.csv` | 2026-11-16 | Facts only; no text copied | Link per row | `labels/` |
@@ -22,3 +22,5 @@ access date, and the entries marked "confirm" have not been checked yet.
 | MapLibre demo fonts | Ward labels on the map | demotiles.maplibre.org, loaded by the browser | 2026-11-19 | confirm | confirm | not stored |
 | Open-Meteo Previous Runs | Archived forecasts made 1-5 days ahead, for replays | Open API, no key | 2026-11-19 | Free for non-commercial use | confirm | `data/raw/previous_runs/` |
 | ERA5 hourly reanalysis (via Open-Meteo Historical Weather API) | Heat: thresholds and the forecast correction (Stage 9) | Open API, no key; `models=era5` | 2026-11-19 | ERA5: Copernicus licence (free, attribution); Open-Meteo: CC BY 4.0, free for non-commercial use | Hersbach et al. (2023), ERA5 hourly data on single levels, Copernicus C3S CDS, doi:10.24381/cds.adbb2d47; Open-Meteo.com | `data/raw/era5/` |
+| NASA Global Landslide Catalog (export) | Landslide inventory, MMR and Raigad (Stage 10) | data.nasa.gov legacy CSV export, no key | 2026-11-19 | NASA open data; agree to the GLC terms on the NASA landslide pages | Kirschbaum et al. (2010), Natural Hazards 52; Kirschbaum, Stanley and Zhou (2015), Geomorphology 249 | `data/raw/glc/` |
+| GSI landslide inventory (Bhukosh) | Landslide inventory (Stage 10), not yet obtained | bhukosh.gsi.gov.in, login; did not respond from outside the portal | - | confirm | Geological Survey of India | `data/raw/gsi/` (placed by hand) |

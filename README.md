@@ -27,8 +27,8 @@ python -m scripts.demo --serve     # build everything missing, check it, open ht
 
 `scripts/demo.py` runs every stage below in order: static ward features, IMD rain for each label
 year, Open-Meteo forecasts for 2024-2025, the tide and rain-correction models, the flood model,
-today's flood and heat runs, hindcasts of 19 August 2025 (flood) and 23 October 2025 (heat)
-and the Stage 7 replays. It then checks that the
+today's flood and heat runs, hindcasts of 19 August 2025 (flood) and 23 October 2025 (heat),
+the Stage 7 replays and the Stage 10 landslide model. It then checks that the
 API answers for all 24 wards and that the map is built. Steps already built are skipped, so an
 interrupted run resumes; `--force` rebuilds all, `--skip-replay` leaves out Stage 7. The first
 run downloads about 265 MB and takes about 30 minutes; if a download fails, run it again. Reports from a demo run go to `data/demo/`.
@@ -204,6 +204,26 @@ python -m models.heat --date 2025-10-23 --source era5   # a past hot day from ER
 - **City scale:** ERA5 has two land cells over Mumbai, so wards differ little. Ward-level heat
   needs land-surface temperature (later stage).
 
+## Landslide susceptibility (Stage 10)
+
+```bash
+python -m models.landslide --fetch                       # catalog, DEM, land cover, OSM lines
+python -m models.landslide --report docs/landslide.md    # 1 km cells, spatial split, final model
+```
+
+- **Area:** a box around the Mumbai Metropolitan Region and Raigad (72.75-73.85 E,
+  17.80-19.80 N), 0.01 degree cells, about 18,600 on land.
+- **Inventory:** NASA Global Landslide Catalog (news-based, 2007-2017), events located to 1 km
+  or better: 25 landslide cells. The GSI inventory needs a Bhukosh login: put its export
+  (GeoJSON, GeoPackage or shapefile) in `data/raw/gsi/` and rerun `--report`.
+- **Models:** XGBoost and random forest against slope alone, scored on held-out 0.25 degree
+  blocks (PR-AUC, and recall in the top 10% / 20% of each held-out area's land).
+- **Result:** the final model (terrain, rivers and monsoon rain) puts 14 of 25 held-out
+  landslide cells in the top 10% of land. Land cover and road distance score higher but learn
+  where landslides get reported, so they are left out. Details and limits:
+  `docs/landslide.md`. Saved: `data/processed/models/landslide_xgb.json` and the map
+  `data/processed/landslide/susceptibility.tif`. Not on the web map yet.
+
 ## Layout
 
 ```
@@ -212,12 +232,14 @@ pipelines/  raw store, pilot grid, one fetcher per source, runner, QC checks, fa
 scripts/    load_wards.py, demo.py (the Semester 1 demo end to end)
 models/     forecast.py (bias correction and skill scores), tide.py (harmonic tide),
             flood.py (XGBoost flood model), risk.py (risk run for every ward -> PostGIS),
-            replay.py (past flood days as if live, lead time), heat.py (heat stress)
+            replay.py (past flood days as if live, lead time), heat.py (heat stress),
+            landslide.py (landslide susceptibility, MMR and Raigad)
 web/        the map (React + MapLibre)
 assistant/  later stages
 labels/     flood_events.csv, the hand-kept flood label table
 docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md,
-            flood_model.md, replay.md, report_sem1.md (Semester 1 report), heat.md
+            flood_model.md, replay.md, report_sem1.md (Semester 1 report), heat.md,
+            landslide.md
 data/       raw and processed files, not committed
 ```
 

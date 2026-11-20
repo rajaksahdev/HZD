@@ -19,7 +19,17 @@ def test_rain_jobs_cover_every_label_year_and_both_forecast_seasons():
 
 def test_steps_run_inputs_before_models_before_runs():
     names = [name for name, _, _ in demo.STEPS]
-    assert names == ["static", "rain", "tide", "forecast", "flood", "heat", "today", "replay"]
+    assert names == [
+        "static",
+        "rain",
+        "tide",
+        "forecast",
+        "flood",
+        "heat",
+        "today",
+        "replay",
+        "landslide",
+    ]
 
 
 def test_heat_split_runs_forward_in_time():
