@@ -3,7 +3,18 @@
 from datetime import datetime
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, create_engine, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from api.config import settings
@@ -131,6 +142,88 @@ class WardRoute(Base):
     people_cut_off: Mapped[int] = mapped_column(Integer, default=0)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     geometry = mapped_column(Geometry("LINESTRING", srid=4326), nullable=True)
+
+
+class AlertKey(Base):
+    """Public half of each alert signing key (Stage 13). The private half never enters the
+    database or the API process."""
+
+    __tablename__ = "alert_keys"
+
+    key_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    public_key: Mapped[str] = mapped_column(String(64))  # raw 32 bytes, base64
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AlertMessage(Base):
+    """One message of one alert (Stage 13): issued and signed, or a draft waiting for an
+    operator. `body` is the exact signed JSON that receivers get."""
+
+    __tablename__ = "alert_messages"
+    __table_args__ = (
+        Index(
+            "alert_messages_issued_seq",
+            "alert_id",
+            "sequence",
+            unique=True,
+            postgresql_where=text("status = 'issued'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    alert_id: Mapped[str] = mapped_column(String(40), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    message_type: Mapped[str] = mapped_column(String(8))
+    hazard: Mapped[str] = mapped_column(String(16), index=True)
+    ward_id: Mapped[str] = mapped_column(ForeignKey("wards.ward_id"), index=True)
+    severity: Mapped[str] = mapped_column(String(8))
+    trust: Mapped[str] = mapped_column(String(8))
+    action_code: Mapped[str] = mapped_column(String(32))
+    onset: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    is_test: Mapped[bool] = mapped_column(Boolean, default=True)
+    run_id: Mapped[str | None] = mapped_column(String(64))
+    # issued, pending (needs an operator), superseded, withdrawn, rejected, expired
+    status: Mapped[str] = mapped_column(String(12), index=True)
+    reason: Mapped[str | None] = mapped_column(String(300))  # why it needs or got approval
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[str | None] = mapped_column(String(64))
+    key_id: Mapped[str | None] = mapped_column(String(32))
+    signature: Mapped[str | None] = mapped_column(String(128))
+    body: Mapped[str | None] = mapped_column(Text)
+
+
+class Operator(Base):
+    """A person who may approve red alerts (Stage 13): password and a TOTP authenticator."""
+
+    __tablename__ = "operators"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    password_hash: Mapped[str] = mapped_column(String(200))
+    totp_secret: Mapped[str] = mapped_column(String(64))
+    last_step: Mapped[int] = mapped_column(Integer, default=0)  # a code works only once
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AlertTarget(Base):
+    """False-alarm target per ward and hazard (Stage 13), and the share of past alerts that no
+    flood report confirmed. Over the target, even orange alerts need an operator."""
+
+    __tablename__ = "alert_targets"
+
+    ward_id: Mapped[str] = mapped_column(ForeignKey("wards.ward_id"), primary_key=True)
+    hazard: Mapped[str] = mapped_column(String(16), primary_key=True)
+    max_false_alarm: Mapped[float] = mapped_column(Float)  # target share of unconfirmed alerts
+    alerts: Mapped[int | None] = mapped_column(Integer)  # alert-days in the measured period
+    confirmed: Mapped[int | None] = mapped_column(Integer)  # of them, with a flood report
+    false_alarm: Mapped[float | None] = mapped_column(Float)  # 1 - confirmed / alerts
+    period: Mapped[str | None] = mapped_column(String(64))
+    measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # ward_risk was created in Stage 0 without the link to risk_runs; create_all never alters a table.

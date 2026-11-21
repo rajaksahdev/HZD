@@ -10,6 +10,13 @@ GET /v1/risk?lat=&lon=          risk for the ward containing a point
 GET /v1/impact?hazard=&run_id=  people at risk, impact score and nearest shelter per ward
 GET /v1/wards/{ward_id}/impact  the same for one ward, with its routes as GeoJSON
 GET /v1/facilities?kind=        hospitals and shelter candidates as GeoJSON
+GET /v1/alerts?hazard=&ward_id=&at=   signed alerts active now (or at a time)
+GET /v1/alerts/{alert_id}       every signed message of one alert, in sequence
+GET /v1/alerts/{alert_id}/cap   the latest (or ?sequence=) message as CAP 1.2 XML
+GET /v1/alert-keys              public keys to check alert signatures (Ed25519)
+
+Alerts are only read here: the engine that signs them (alerts/engine.py) runs elsewhere with the
+private key, which this process never opens.
 
 hazard is flood (default) or heat. Without run_id the newest run of that hazard valid now is
 used. Every answer carries the data age and the on-screen
@@ -21,14 +28,23 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import Connection, text
 from sqlalchemy.exc import OperationalError
 
+from alerts.engine import cap_xml, messages
 from api.db import engine
-from api.schemas import SCHEMA_VERSION, Hazard, Route, Severity, WardImpact, WardRisk
+from api.schemas import (
+    SCHEMA_VERSION,
+    Alert,
+    Hazard,
+    Route,
+    Severity,
+    WardImpact,
+    WardRisk,
+)
 
 STALE_MINUTES = 180  # the pipeline runs hourly; three hours without new data means it stopped
 WARN_LEVELS = (Severity.RED, Severity.ORANGE)
@@ -504,6 +520,90 @@ def facilities(conn: Conn, kind: str | None = None, ward_id: str | None = None):
         "note": "Shelter candidates are schools, community centres and assembly points from "
         "OpenStreetMap, not designated shelters.",
     }
+
+
+class AlertsAnswer(BaseModel):
+    at: datetime
+    alerts: list[Alert]
+    warnings: list[str]
+    disclaimer: str = DISCLAIMER
+
+
+def alert_warnings(alerts: list[Alert]) -> list[str]:
+    out = []
+    if any(a.is_test for a in alerts):
+        out.append("TEST alerts: produced by a prototype from demo or hindcast runs.")
+    red = sorted(a.ward_id for a in alerts if a.severity == Severity.RED)
+    if red:
+        out.append(f"Red alerts: {', '.join(red)}.")
+    return out
+
+
+@app.get("/v1/alerts", response_model=AlertsAnswer)
+def alerts_active(
+    conn: Conn,
+    hazard: Hazard | None = None,
+    ward_id: str | None = None,
+    at: datetime | None = None,
+):
+    """Alerts in force at `at` (default now): the latest message of each alert sent by then,
+    unless it is a cancel or has expired."""
+    at = at or datetime.now(UTC)
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    if not has_table(conn, "alert_messages"):
+        return AlertsAnswer(at=at, alerts=[], warnings=[])
+    rows = conn.execute(
+        text(
+            """
+            SELECT DISTINCT ON (alert_id) body, message_type, expires_at
+            FROM alert_messages
+            WHERE status = 'issued' AND issued_at <= :at
+              AND (CAST(:hazard AS text) IS NULL OR hazard = :hazard)
+              AND (CAST(:ward_id AS text) IS NULL OR ward_id = :ward_id)
+            ORDER BY alert_id, sequence DESC
+            """
+        ),
+        {"at": at, "hazard": hazard.value if hazard else None, "ward_id": ward_id},
+    ).mappings()
+    alerts = [
+        Alert(**json.loads(r["body"]))
+        for r in rows
+        if r["message_type"] != "cancel" and r["expires_at"] > at
+    ]
+    alerts.sort(key=lambda a: (a.hazard, a.ward_id))
+    return AlertsAnswer(at=at, alerts=alerts, warnings=alert_warnings(alerts))
+
+
+@app.get("/v1/alert-keys")
+def alert_keys(conn: Conn):
+    if not has_table(conn, "alert_keys"):
+        return []
+    rows = conn.execute(
+        text(
+            "SELECT key_id, public_key, created_at, retired_at FROM alert_keys ORDER BY created_at"
+        )
+    ).mappings()
+    return [dict(r, algorithm="Ed25519") for r in rows]
+
+
+@app.get("/v1/alerts/{alert_id}")
+def alert_history(conn: Conn, alert_id: str):
+    found = messages(conn, alert_id) if has_table(conn, "alert_messages") else []
+    if not found:
+        raise HTTPException(404, f"no alert {alert_id}")
+    return {"alert_id": alert_id, "messages": found, "disclaimer": DISCLAIMER}
+
+
+@app.get("/v1/alerts/{alert_id}/cap")
+def alert_cap(conn: Conn, alert_id: str, sequence: int | None = Query(None, ge=1)):
+    if not has_table(conn, "alert_messages"):
+        raise HTTPException(404, f"no alert {alert_id}")
+    try:
+        xml = cap_xml(conn, alert_id, sequence)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return Response(xml, media_type="application/xml")
 
 
 if WEB_DIST.exists():  # the built map (cd web && npm run build); mounted last so /v1 wins

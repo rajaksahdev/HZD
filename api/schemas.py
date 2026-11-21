@@ -8,7 +8,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "1.2"  # 1.1: WardRisk.value and unit (Stage 9); 1.2: Route, WardImpact
+SCHEMA_VERSION = "1.3"  # 1.1: WardRisk.value, unit (Stage 9); 1.2: Route, WardImpact; 1.3: Alert
 
 
 class Hazard(StrEnum):
@@ -109,7 +109,10 @@ class WardImpact(_Base):
 
 
 class Alert(_Base):
-    """Structured alert. Text is rendered later from approved templates via action_code."""
+    """One signed message about one alert. Text is rendered later from approved templates via
+    action_code. The messages of an alert share alert_id; sequence counts them from 1 (the first
+    alert, then updates, then at most one cancel), so a receiver drops anything not newer than
+    what it holds. The signature covers every other field (alerts/keys.py: canonical JSON)."""
 
     alert_id: str
     key_id: str
@@ -123,6 +126,8 @@ class Alert(_Base):
     trust: Trust
     action_code: str
     is_test: bool = True  # demo alerts stay TEST unless an operator says otherwise
+    onset: datetime | None = None  # 1.3: start of the risk window the alert is about
+    run_id: str | None = None  # 1.3: the risk run behind it
     signature: str | None = None  # Ed25519, added by the alert engine (Stage 13)
 
     @model_validator(mode="after")

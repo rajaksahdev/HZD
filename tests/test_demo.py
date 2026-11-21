@@ -32,6 +32,7 @@ def test_steps_run_inputs_before_models_before_runs():
         "replay",
         "landslide",
         "impact",
+        "alerts",
     ]
 
 

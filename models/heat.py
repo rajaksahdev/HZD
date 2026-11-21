@@ -7,7 +7,7 @@ Index      Apparent temperature (Steadman 1994, the shade version used by the Au
            hourly value in the local (IST) day.
 Levels     Percentiles of the daily index over Mumbai in ERA5, 1991-2020: yellow from the 90th,
            orange from the 95th, red from the 99th. Local percentiles, because what counts as
-           dangerous heat depends on what people are used to. Provisional until Stage 13.
+           dangerous heat depends on what people are used to. Stage 13 alerts from orange.
 ERA5       Hourly reanalysis (0.25 degree) through Open-Meteo's historical weather API, no
            account needed. Over Mumbai the API serves two land cells, both at 73.00 E; each ward
            takes the nearer. ERA5 therefore gives city-scale heat and cannot see differences

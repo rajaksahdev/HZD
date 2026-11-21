@@ -22,6 +22,8 @@ skipped, so an interrupted run resumes):
   landslide landslide catalog, terrain for MMR and Raigad, susceptibility model (Stage 10)
   impact    population, hospitals, shelter candidates, roads; vulnerability per ward and routes
             for the hindcast (Stage 12)
+  alerts    signing key, false-alarm shares per ward on the 2024-2025 replays, and the
+            replayed 19 Aug 2025 runs through the alert engine as issued (Stage 13)
   check    the API answers for every ward and the map is built
 
 Reports from the demo go to data/demo/, not docs/, so a demo run never changes committed files.
@@ -183,6 +185,28 @@ def impact() -> None:
         run("models.impact", "--routes", *(runs[:1] + replays))
 
 
+ALERT_RUNS = [f"replay-20250819-lead{n}d" for n in (3, 2, 1, 0)]  # in the order they were issued
+
+
+def alerts_done() -> bool:
+    from alerts import keys
+
+    return keys.key_path().exists() and (OUT / "alerts.md").exists()
+
+
+def alerts() -> None:
+    from alerts import keys
+    from models import risk
+
+    if not keys.key_path().exists():
+        run("alerts.keys", "--new")
+    run("alerts.engine", "--targets", "--report", (OUT / "alerts.md").as_posix())
+    have = {r["run_id"] for r in risk.list_runs()}
+    for run_id in ALERT_RUNS:
+        if run_id in have:  # red drafts wait for an operator; nobody approves them here
+            run("alerts.engine", "--run", run_id, "--as-issued")
+
+
 def blend_done() -> bool:
     return (MODELS / "blend.json").exists()
 
@@ -240,11 +264,48 @@ def check() -> list[str]:
     print(f"  impact: {len(with_people)} wards with population, {len(with_shelter)} with a shelter")
     if len(with_people) != 24 or len(with_shelter) != 24:
         problems.append("Stage 12: expected population and a nearest shelter for all 24 wards")
+    problems += check_alerts(client)
     if not (ROOT / "web" / "dist" / "index.html").exists():
         problems.append("map not built: cd web && npm ci && npm run build")
     elif client.get("/").status_code != 200:
         problems.append("the API does not serve the built map at /")
     return problems
+
+
+def check_alerts(client) -> list[str]:
+    """Stage 13: the replayed runs produced messages, and every sent one has a valid signature."""
+    from sqlalchemy import text
+
+    from alerts import keys
+    from api.db import engine
+
+    public = {k["key_id"]: k["public_key"] for k in client.get("/v1/alert-keys").json()}
+    if not public:
+        return ["Stage 13: no alert signing key registered"]
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT status, alert_id FROM alert_messages WHERE run_id = ANY(:r)"),
+            {"r": ALERT_RUNS},
+        ).all()
+    sent = sorted({a for status, a in rows if status == "issued"})
+    held = sum(status == "pending" for status, _ in rows)
+    print(
+        f"  alerts: {len(rows)} messages for the 19 Aug 2025 replays, {len(sent)} alerts sent, "
+        f"{held} waiting for an operator"
+    )
+    if not rows:
+        with engine.connect() as conn:
+            replayed = conn.execute(
+                text("SELECT count(*) FROM risk_runs WHERE run_id = ANY(:r)"), {"r": ALERT_RUNS}
+            ).scalar()
+        return ["Stage 13: the replayed runs produced no alert messages"] if replayed else []
+    bad = [
+        m["alert_id"]
+        for a in sent
+        for m in client.get(f"/v1/alerts/{a}").json()["messages"]
+        if not keys.verify(public.get(m["key_id"], ""), m)
+    ]
+    return [f"Stage 13: bad signature on {', '.join(bad)}"] if bad else []
 
 
 STEPS = [
@@ -259,6 +320,7 @@ STEPS = [
     ("replay", lambda: False, replay),
     ("landslide", landslide_done, landslide),
     ("impact", impact_done, impact),
+    ("alerts", alerts_done, alerts),
 ]
 
 

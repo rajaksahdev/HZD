@@ -29,7 +29,8 @@ python -m scripts.demo --serve     # build everything missing, check it, open ht
 year, Open-Meteo forecasts for 2024-2025, the tide and rain-correction models, the flood model,
 today's flood and heat runs, hindcasts of 19 August 2025 (flood) and 23 October 2025 (heat),
 the Stage 7 replays, the Stage 10 landslide model, the Stage 11 blend and trust levels and the
-Stage 12 population, shelters, hospitals and routes. It then
+Stage 12 population, shelters, hospitals and routes, and the Stage 13 alert engine on the
+replayed 19 Aug 2025 runs. It then
 checks that the
 API answers for all 24 wards and that the map is built. Steps already built are skipped, so an
 interrupted run resumes; `--force` rebuilds all, `--skip-replay` leaves out Stage 7. The first
@@ -152,7 +153,7 @@ uvicorn api.main:app --port 8000                            # map at http://loca
   Stage 4 corrected forecast for the day (IMD for earlier days where published, else the
   forecast); `observed` mode is a hindcast from IMD. Every run is marked TEST unless
   `--live` is given in forecast mode. Severity: green below 0.25, yellow from 0.25, orange
-  from 0.5, red from 0.75 (provisional until Stage 13).
+  from 0.5, red from 0.75 (Stage 13 sends alerts from orange).
 - **API** (`api/main.py`, docs at `/docs`): `GET /v1/risk?lat=&lon=`, `GET /v1/wards/{id}/risk`,
   `GET /v1/wards` (GeoJSON for the map), `GET /v1/runs`, `GET /v1/health`. Without `run_id`
   the newest run valid now is used. Every answer carries the data age and the on-screen
@@ -198,7 +199,7 @@ python -m models.heat --date 2025-10-23 --source era5   # a past hot day from ER
 - **Index:** apparent temperature (Steadman, shade), from temperature, humidity and wind; the
   daily maximum over the IST day.
 - **Levels:** yellow, orange and red from the 90th, 95th and 99th percentiles of ERA5 1991-2020
-  over Mumbai (36.9, 37.8 and 39.4 °C). Provisional until Stage 13.
+  over Mumbai (36.9, 37.8 and 39.4 °C). Stage 13 sends alerts from orange.
 - **Forecast:** ECMWF, GFS and ICON, quantile-mapped to ERA5; the way to combine them is chosen
   on August-December 2024 and scored once on 2025. Results and limits: `docs/heat.md`.
 - **Map:** the Flood / Heat switch (or `/?hazard=heat`) shows the heat level and the "feels
@@ -284,6 +285,38 @@ python -m models.impact --routes RUN_ID                      # routes avoiding a
   at risk per ward, shows facilities when zoomed in, and draws the picked ward's routes (dashed
   red when there is no safe route). Results and limits: `docs/impact.md`.
 
+## Alert engine (Stage 13)
+
+```bash
+python -m alerts.keys --new                       # Ed25519 signing key in secrets/ (not committed)
+python -m alerts.operators --add NAME             # operator: password + authenticator app (TOTP)
+python -m alerts.engine --targets --report docs/alerts.md   # false-alarm share per ward
+python -m alerts.engine --run latest --hazard flood         # after each risk run
+python -m alerts.engine --pending                 # drafts waiting for an operator
+python -m alerts.engine --approve ID --operator NAME        # asks for password and code
+python -m alerts.engine --cancel ALERT_ID --operator NAME --reason "false alarm"
+python -m alerts.engine --cap ALERT_ID            # CAP 1.2 XML
+```
+
+- **Rules:** a ward at orange or red gets an alert (action code per hazard and level), expiring
+  at the end of the risk window. The next run sends an update when the level, trust or window
+  changes, and a cancel when the ward drops below orange. Orange goes out at once; red, any
+  lowering or ending of a red alert, a new low-trust alert and a new alert in a ward over its
+  false-alarm target wait for an operator. Landslide susceptibility sends no alerts.
+- **Messages:** JSON in the shared `Alert` schema (1.3): `alert_id`, `sequence` (1, 2, ... per
+  alert, so receivers drop old or replayed messages), `message_type` (alert, update, cancel),
+  expiry, `key_id` and an Ed25519 signature over the canonical JSON. TEST unless the run is live
+  and `ALERTS_LIVE=1`. The private key is read only by the engine, never by the API.
+- **Operators:** two-factor login (scrypt password and a one-time TOTP code, RFC 6238); a code
+  works once; five failures lock the operator for 15 minutes.
+- **CAP 1.2:** Alert, Update or Cancel with references to earlier messages, ward polygon and
+  geocode, signature as parameters; checked against the OASIS CAP 1.2 schema.
+- **False-alarm target:** at most 50% of a ward's flood alerts unconfirmed by a flood report
+  (`--set-target` per ward). On the 2024-2025 day-ahead replays all 24 wards are over it, so new
+  flood alerts wait for an operator. Results and limits: `docs/alerts.md`.
+- **API:** `GET /v1/alerts` (in force now or `?at=`), `GET /v1/alerts/{id}` (all messages),
+  `GET /v1/alerts/{id}/cap`, `GET /v1/alert-keys`.
+
 ## Layout
 
 ```
@@ -296,12 +329,14 @@ models/     forecast.py (bias correction and skill scores), tide.py (harmonic ti
             landslide.py (landslide susceptibility, MMR and Raigad), blend.py (model blend,
             trust levels, bust detection), impact.py (population, shelters, hospitals,
             vulnerability, people at risk, routes)
+alerts/     keys.py (Ed25519), operators.py (two-factor login), engine.py (rules, messages,
+            false-alarm targets), cap.py (CAP 1.2 export)
 web/        the map (React + MapLibre)
 assistant/  later stages
 labels/     flood_events.csv, the hand-kept flood label table
 docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md,
             flood_model.md, replay.md, report_sem1.md (Semester 1 report), heat.md,
-            landslide.md, blend.md and blend_reliability.svg, impact.md
+            landslide.md, blend.md and blend_reliability.svg, impact.md, alerts.md
 data/       raw and processed files, not committed
 ```
 

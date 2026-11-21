@@ -37,7 +37,7 @@ from pipelines.grid import target_coords
 
 IST = timezone(timedelta(hours=5, minutes=30))
 IMD_DAY_END = time(3, 0, tzinfo=UTC)  # an IMD rain day ends 08:30 IST = 03:00 UTC
-# Probability at or above each value gives that severity. Provisional until Stage 13.
+# Probability at or above each value gives that severity. Stage 13 alerts from orange.
 SEVERITY_BANDS = [(0.75, Severity.RED), (0.5, Severity.ORANGE), (0.25, Severity.YELLOW)]
 MODES = ("observed", "forecast")
 
