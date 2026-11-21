@@ -30,7 +30,7 @@ year, Open-Meteo forecasts for 2024-2025, the tide and rain-correction models, t
 today's flood and heat runs, hindcasts of 19 August 2025 (flood) and 23 October 2025 (heat),
 the Stage 7 replays, the Stage 10 landslide model, the Stage 11 blend and trust levels and the
 Stage 12 population, shelters, hospitals and routes, and the Stage 13 alert engine on the
-replayed 19 Aug 2025 runs. It then
+replayed 19 Aug 2025 runs, and one poll of the official SACHET feed. It then
 checks that the
 API answers for all 24 wards and that the map is built. Steps already built are skipped, so an
 interrupted run resumes; `--force` rebuilds all, `--skip-replay` leaves out Stage 7. The first
@@ -317,11 +317,31 @@ python -m alerts.engine --cap ALERT_ID            # CAP 1.2 XML
 - **API:** `GET /v1/alerts` (in force now or `?at=`), `GET /v1/alerts/{id}` (all messages),
   `GET /v1/alerts/{id}/cap`, `GET /v1/alert-keys`.
 
+## Official alerts (Stage 14)
+
+```bash
+python -m pipelines.sources.sachet            # poll SACHET (NDMA); cron every 15 minutes
+python -m pipelines.sources.sachet --list     # official alerts stored, newest first
+```
+
+- **Source:** SACHET, NDMA's CAP platform: IMD, Maharashtra SDMA, CWC, INCOIS. The Maharashtra
+  feed (all items) and the all-India feed (national agencies and items naming Mumbai or its
+  neighbours). Feeds keep only the newest 10 and 100 items, so history starts at the first poll.
+- **Wards:** those with 5% or more of their area inside an alert's polygons; without a shape,
+  LGD district codes 482 (Mumbai) and 483 (Mumbai Suburban). Updates and cancels replace the
+  messages they reference.
+- **API:** `GET /v1/official-alerts?at=&ward_id=`: in force for the 24 wards, the newest from
+  Maharashtra, and the time of the last poll. `/v1/alerts` also counts drafts waiting.
+- **Dashboard:** official and HazardLens alerts side by side, wards under an official alert
+  outlined in dashed blue, the latest Maharashtra messages, English and Marathi headlines as
+  published. Details and limits: `docs/official.md`.
+
 ## Layout
 
 ```
 api/        config, shared schemas (api/schemas.py), database tables, main.py (FastAPI)
-pipelines/  raw store, pilot grid, one fetcher per source, runner, QC checks, fault detector
+pipelines/  raw store, pilot grid, one fetcher per source (sources/sachet.py: official
+            alerts), runner, QC checks, fault detector
 scripts/    load_wards.py, demo.py (the Semester 1 demo end to end)
 models/     forecast.py (bias correction and skill scores), tide.py (harmonic tide),
             flood.py (XGBoost flood model), risk.py (risk run for every ward -> PostGIS),
@@ -336,7 +356,8 @@ assistant/  later stages
 labels/     flood_events.csv, the hand-kept flood label table
 docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md,
             flood_model.md, replay.md, report_sem1.md (Semester 1 report), heat.md,
-            landslide.md, blend.md and blend_reliability.svg, impact.md, alerts.md
+            landslide.md, blend.md and blend_reliability.svg, impact.md, alerts.md,
+            official.md
 data/       raw and processed files, not committed
 ```
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 
 // Severity colours. Flood bands match SEVERITY_BANDS in models/risk.py; heat bands are the
-// ERA5 1991-2020 percentiles in models/heat.py. Both provisional until Stage 13.
+// ERA5 1991-2020 percentiles in models/heat.py. Alerts go out from orange (Stage 13).
 const LEVELS = [
   { key: "red", label: "Red", color: "#c62828" },
   { key: "orange", label: "Orange", color: "#ef6c00" },
@@ -31,6 +31,7 @@ const PLACES = {
   hospital: { label: "Hospital", color: "#6a1b9a" },
 };
 const UNSAFE = "#c62828"; // a route that crosses roads likely to flood
+const OFFICIAL = "#0d47a1"; // outline of wards under an official (SACHET) alert, Stage 14
 const EMPTY = { type: "FeatureCollection", features: [] };
 const COLOR = Object.fromEntries(LEVELS.map((l) => [l.key, l.color]));
 const STALE_MINUTES = 180; // same as api/main.py
@@ -104,6 +105,8 @@ export default function App() {
   const [ready, setReady] = useState(null); // the map, once its layers exist
   const [impact, setImpact] = useState(null); // GET /v1/impact for the shown run
   const [wardImpact, setWardImpact] = useState(null); // the picked ward's impact and routes
+  const [ours, setOurs] = useState(null); // GET /v1/alerts: HazardLens alerts in force
+  const [official, setOfficial] = useState(null); // GET /v1/official-alerts: SACHET
 
   const load = useCallback(async () => {
     try {
@@ -196,6 +199,13 @@ export default function App() {
         layout: { "text-field": ["get", "ward_id"], "text-font": ["Open Sans Semibold"], "text-size": 12 },
         paint: { "text-color": "#102027", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
       });
+      m.addLayer({
+        id: "official-line",
+        type: "line",
+        source: "wards",
+        filter: ["in", ["get", "ward_id"], ["literal", []]],
+        paint: { "line-color": OFFICIAL, "line-width": 3, "line-dasharray": [2, 1] },
+      });
       m.addSource("routes", { type: "geojson", data: EMPTY });
       const unsafe = ["==", ["get", "status"], "no_safe_route"];
       m.addLayer({
@@ -283,6 +293,32 @@ export default function App() {
     if (ready) ready.getSource("routes").setData(wardImpact?.routes || EMPTY);
   }, [ready, wardImpact]);
 
+  // Alerts in force: now for the current run, or when a past run was issued (Stages 13-14).
+  const at = runId && data?.run ? data.run.issued_at : "";
+  const loadAlerts = useCallback(async () => {
+    const q = at ? `&at=${encodeURIComponent(at)}` : "";
+    const [mine, theirs] = await Promise.all([
+      getJson(`/v1/alerts?hazard=${hazard}${q}`).catch(() => null),
+      getJson(`/v1/official-alerts?recent=5${q}`).catch(() => null),
+    ]);
+    setOurs(mine);
+    setOfficial(theirs);
+  }, [at, hazard]);
+
+  useEffect(() => {
+    loadAlerts();
+    const timer = setInterval(loadAlerts, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [loadAlerts]);
+
+  const officialWards = [...new Set((official?.alerts || []).flatMap((a) => a.wards))];
+  const officialKey = officialWards.join(",");
+  useEffect(() => {
+    if (!ready) return;
+    const wards = officialKey ? officialKey.split(",") : [];
+    ready.setFilter("official-line", ["in", ["get", "ward_id"], ["literal", wards]]);
+  }, [ready, officialKey]);
+
   const run = data?.run;
   const ageMinutes = run ? Math.max(0, Math.floor((now - new Date(run.data_time)) / 60000)) : null;
   const wards = (data?.features || []).map((f) => f.properties);
@@ -298,6 +334,7 @@ export default function App() {
   const impactOf = Object.fromEntries((impact?.wards || []).map((w) => [w.ward_id, w]));
   const mine = wardImpact?.wards?.[0];
   const ranges = HAZARDS[hazard].ranges;
+  const officialHere = (official?.alerts || []).filter((a) => a.wards.includes(picked?.ward_id));
 
   return (
     <div className="layout">
@@ -372,6 +409,87 @@ export default function App() {
         )}
 
         <section>
+          <h2>Alerts in force {at ? ist(at) : "now"}</h2>
+          <div className="alerts-grid">
+            <div>
+              <h3>Official (SACHET)</h3>
+              {!official && <p className="muted">Official feed not available.</p>}
+              {official?.alerts.length === 0 && <p className="muted">None for the 24 wards.</p>}
+              {(official?.alerts || []).map((a) => (
+                <article key={a.identifier} className="alert-card">
+                  <span className="chip" style={{ background: COLOR[a.colour] || NO_DATA }}>
+                    {a.severity || "?"}
+                  </span>{" "}
+                  <strong>{a.event || "Alert"}</strong>
+                  <div className="muted">
+                    {a.agency || a.sender} · until {a.expires ? ist(a.expires) : "?"}
+                  </div>
+                  <p>{a.headline}</p>
+                  {a.headline_local && (
+                    <p lang={(a.language_local || "mr").toLowerCase()}>{a.headline_local}</p>
+                  )}
+                  <div className="muted">Wards: {a.wards.join(", ")}</div>
+                  {a.link && (
+                    <a href={a.link} target="_blank" rel="noreferrer">
+                      CAP file
+                    </a>
+                  )}
+                </article>
+              ))}
+            </div>
+            <div>
+              <h3>HazardLens</h3>
+              {!ours && <p className="muted">Alerts not available.</p>}
+              {ours?.alerts.length === 0 && <p className="muted">None in force.</p>}
+              {(ours?.alerts || []).map((a) => (
+                <article key={`${a.alert_id}-${a.sequence}`} className="alert-card">
+                  <span className="chip" style={{ background: COLOR[a.severity] }}>
+                    {a.severity}
+                  </span>{" "}
+                  <strong>
+                    {a.hazard} · ward {a.ward_id}
+                  </strong>
+                  {a.is_test && <span className="badge test">TEST</span>}
+                  <div className="muted">
+                    {a.message_type} #{a.sequence} · until {ist(a.expires_at)} · trust {a.trust}
+                  </div>
+                  <div className="muted">signed {a.key_id}</div>
+                </article>
+              ))}
+              {ours?.waiting > 0 && (
+                <p className="muted">
+                  {ours.waiting} draft{ours.waiting > 1 ? "s" : ""} waiting for an operator
+                </p>
+              )}
+            </div>
+          </div>
+          {(official?.warnings || []).map((w) => (
+            <p key={w} className="muted small">
+              {w}
+            </p>
+          ))}
+          {official?.recent?.length > 0 && (
+            <details className="recent">
+              <summary>Latest official alerts in Maharashtra</summary>
+              <ul>
+                {official.recent.map((a) => (
+                  <li key={a.identifier}>
+                    <span className="swatch" style={{ background: COLOR[a.colour] || NO_DATA }} />
+                    {ist(a.sent)} · {a.agency || a.sender} · {a.event}
+                    <div className="muted">{a.area_desc}</div>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {official?.last_fetch && (
+            <p className="muted small">
+              Official feed checked {ist(official.last_fetch)}. {official.source}
+            </p>
+          )}
+        </section>
+
+        <section>
           <h2>Picked point</h2>
           {!picked && <p className="muted">Click the map to see the risk for that place.</p>}
           {picked?.loading && <p className="muted">Looking up…</p>}
@@ -386,6 +504,12 @@ export default function App() {
                   {r.value != null ? `${r.value.toFixed(1)} ${r.unit || ""}` : `p ${r.probability.toFixed(2)}`} ·
                   trust {r.trust}
                 </span>
+              ))}
+              {officialHere.map((a) => (
+                <div key={a.identifier} className="official-note">
+                  Official: {a.event || "alert"} from {a.agency || a.sender}, until{" "}
+                  {a.expires ? ist(a.expires) : "?"}
+                </div>
               ))}
               {mine && (
                 <dl className="facts impact">
@@ -458,6 +582,10 @@ export default function App() {
             <li>
               <span className="dash" style={{ borderColor: UNSAFE }} />
               Route that crosses roads likely to flood
+            </li>
+            <li>
+              <span className="dash" style={{ borderColor: OFFICIAL }} />
+              Ward under an official (SACHET) alert
             </li>
           </ul>
         </section>

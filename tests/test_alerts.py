@@ -367,6 +367,7 @@ def test_signed_alert_created_approved_and_cancelled(db, monkeypatch):
     body = active["alerts"][0]
     assert body["is_test"] and keys.verify(public[body["key_id"]], body)
     assert any(w.startswith("TEST") for w in active["warnings"])
+    assert active["waiting"] == 1  # the red draft, as it stood at t0
 
     # Approval needs both factors; a wrong code counts as a failure.
     with db[0].begin() as session:
@@ -404,7 +405,8 @@ def test_signed_alert_created_approved_and_cancelled(db, monkeypatch):
             red.alert_id, made["operator"], "long enough password", code, "again", t3, private
         )
 
-    assert client.get("/v1/alerts", params={"at": t2.isoformat()}).json()["alerts"] == []
+    after = client.get("/v1/alerts", params={"at": t2.isoformat()}).json()
+    assert after["alerts"] == [] and after["waiting"] == 0
     history = client.get(f"/v1/alerts/{red.alert_id}").json()["messages"]
     assert [(m["sequence"], m["message_type"]) for m in history] == [(1, "alert"), (2, "cancel")]
     assert all(keys.verify(public[m["key_id"]], m) for m in history)

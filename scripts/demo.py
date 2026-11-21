@@ -24,6 +24,7 @@ skipped, so an interrupted run resumes):
             for the hindcast (Stage 12)
   alerts    signing key, false-alarm shares per ward on the 2024-2025 replays, and the
             replayed 19 Aug 2025 runs through the alert engine as issued (Stage 13)
+  official  one poll of SACHET, NDMA's official alert feed (Stage 14)
   check    the API answers for every ward and the map is built
 
 Reports from the demo go to data/demo/, not docs/, so a demo run never changes committed files.
@@ -207,6 +208,10 @@ def alerts() -> None:
             run("alerts.engine", "--run", run_id, "--as-issued")
 
 
+def official() -> None:
+    run("pipelines.sources.sachet")
+
+
 def blend_done() -> bool:
     return (MODELS / "blend.json").exists()
 
@@ -265,6 +270,13 @@ def check() -> list[str]:
     if len(with_people) != 24 or len(with_shelter) != 24:
         problems.append("Stage 12: expected population and a nearest shelter for all 24 wards")
     problems += check_alerts(client)
+    theirs = client.get("/v1/official-alerts").json()
+    print(
+        f"  official: feed checked {theirs.get('last_fetch')}, {len(theirs.get('alerts', []))} "
+        f"in force for the wards, {len(theirs.get('recent', []))} recent in Maharashtra"
+    )
+    if not theirs.get("last_fetch"):
+        problems.append("Stage 14: the official SACHET feed was never fetched")
     if not (ROOT / "web" / "dist" / "index.html").exists():
         problems.append("map not built: cd web && npm ci && npm run build")
     elif client.get("/").status_code != 200:
@@ -321,6 +333,7 @@ STEPS = [
     ("landslide", landslide_done, landslide),
     ("impact", impact_done, impact),
     ("alerts", alerts_done, alerts),
+    ("official", lambda: False, official),
 ]
 
 

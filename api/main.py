@@ -14,6 +14,8 @@ GET /v1/alerts?hazard=&ward_id=&at=   signed alerts active now (or at a time)
 GET /v1/alerts/{alert_id}       every signed message of one alert, in sequence
 GET /v1/alerts/{alert_id}/cap   the latest (or ?sequence=) message as CAP 1.2 XML
 GET /v1/alert-keys              public keys to check alert signatures (Ed25519)
+GET /v1/official-alerts?at=&ward_id=   SACHET (NDMA) alerts in force for the 24 wards, the
+                                latest from Maharashtra, and how fresh the feed is (Stage 14)
 
 Alerts are only read here: the engine that signs them (alerts/engine.py) runs elsewhere with the
 private key, which this process never opens.
@@ -525,6 +527,7 @@ def facilities(conn: Conn, kind: str | None = None, ward_id: str | None = None):
 class AlertsAnswer(BaseModel):
     at: datetime
     alerts: list[Alert]
+    waiting: int = 0  # drafts held for an operator at `at`
     warnings: list[str]
     disclaimer: str = DISCLAIMER
 
@@ -572,7 +575,17 @@ def alerts_active(
         if r["message_type"] != "cancel" and r["expires_at"] > at
     ]
     alerts.sort(key=lambda a: (a.hazard, a.ward_id))
-    return AlertsAnswer(at=at, alerts=alerts, warnings=alert_warnings(alerts))
+    waiting = conn.execute(
+        text(
+            "SELECT count(*) FROM alert_messages WHERE reason IS NOT NULL "
+            "AND (closed_at IS NULL OR closed_at > :at) "
+            "AND created_at <= :at AND expires_at > :at "
+            "AND (CAST(:hazard AS text) IS NULL OR hazard = :hazard) "
+            "AND (CAST(:ward_id AS text) IS NULL OR ward_id = :ward_id)"
+        ),
+        {"at": at, "hazard": hazard.value if hazard else None, "ward_id": ward_id},
+    ).scalar()
+    return AlertsAnswer(at=at, alerts=alerts, waiting=waiting, warnings=alert_warnings(alerts))
 
 
 @app.get("/v1/alert-keys")
@@ -604,6 +617,132 @@ def alert_cap(conn: Conn, alert_id: str, sequence: int | None = Query(None, ge=1
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     return Response(xml, media_type="application/xml")
+
+
+# --- Official alerts (Stage 14) -------------------------------------------------------------
+
+OFFICIAL_STALE_MINUTES = 60  # polled every 15 minutes
+OFFICIAL_COLOUR = {"Extreme": "red", "Severe": "orange", "Moderate": "yellow", "Minor": "green"}
+OFFICIAL_FIELDS = (
+    "a.identifier, a.agency, a.sender, a.sent, a.status, a.msg_type, a.event, a.category, "
+    "a.severity, a.urgency, a.certainty, a.effective, a.onset, a.expires, a.headline, "
+    "a.headline_local, a.language_local, a.instruction, a.area_desc, a.link, a.match, "
+    "a.superseded_by, coalesce(array_agg(w.ward_id ORDER BY w.ward_id) "
+    "FILTER (WHERE w.ward_id IS NOT NULL), '{}') AS wards"
+)
+
+
+class OfficialAlertOut(BaseModel):
+    identifier: str
+    agency: str | None
+    sender: str | None
+    sent: datetime
+    status: str
+    msg_type: str
+    event: str | None
+    category: str | None
+    severity: str | None
+    colour: str | None  # CAP severity as a map colour (display only)
+    urgency: str | None
+    certainty: str | None
+    effective: datetime | None
+    onset: datetime | None
+    expires: datetime | None
+    headline: str | None
+    headline_local: str | None
+    language_local: str | None
+    instruction: str | None
+    area_desc: str | None
+    link: str | None
+    match: str
+    superseded_by: str | None
+    wards: list[str]
+
+
+class OfficialAnswer(BaseModel):
+    at: datetime
+    last_fetch: datetime | None  # newest successful poll of the feed
+    alerts: list[OfficialAlertOut]  # in force at `at` for the 24 wards
+    recent: list[OfficialAlertOut]  # newest from Maharashtra, in force or not, for context
+    warnings: list[str]
+    source: str = (
+        "SACHET, NDMA's Common Alerting Protocol platform (sachet.ndma.gov.in). Shown as "
+        "published; HazardLens does not change official alerts."
+    )
+
+
+def official_warnings(last_fetch: datetime | None, at: datetime, now: datetime) -> list[str]:
+    if last_fetch is None:
+        return ["Official feed not fetched yet. Run: python -m pipelines.sources.sachet"]
+    out = []
+    age = minutes_between(last_fetch, now)
+    if age > OFFICIAL_STALE_MINUTES:
+        out.append(f"Official feed last checked {describe_age(age)} ago.")
+    if at < last_fetch - timedelta(minutes=1) and at < now - timedelta(minutes=1):
+        out.append("Official alerts are shown as stored at that time; SACHET keeps no archive.")
+    return out
+
+
+def _official(row) -> OfficialAlertOut:
+    return OfficialAlertOut(**row, colour=OFFICIAL_COLOUR.get(row["severity"] or ""))
+
+
+@app.get("/v1/official-alerts", response_model=OfficialAnswer)
+def official_alerts(
+    conn: Conn, at: datetime | None = None, ward_id: str | None = None, recent: int = 5
+):
+    """Official alerts in force at `at` (default now) for the 24 wards: status Actual, sent by
+    then, not expired, not a Cancel, and not replaced by a message sent by then."""
+    now = datetime.now(UTC)
+    at = at or now
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    if not has_table(conn, "official_alerts"):
+        return OfficialAnswer(
+            at=at, last_fetch=None, alerts=[], recent=[], warnings=official_warnings(None, at, now)
+        )
+    last_fetch = conn.execute(
+        text("SELECT max(fetched_at) FROM official_feed_fetches WHERE ok")
+    ).scalar()
+    active = conn.execute(
+        text(
+            f"""
+            SELECT {OFFICIAL_FIELDS}
+            FROM official_alerts a
+            JOIN official_alert_wards w ON w.identifier = a.identifier
+            LEFT JOIN official_alerts s ON s.identifier = a.superseded_by
+            WHERE a.status = 'Actual' AND a.msg_type <> 'Cancel'
+              AND a.sent <= :at AND coalesce(a.expires, a.sent + interval '1 day') > :at
+              AND (s.identifier IS NULL OR s.sent > :at)
+              AND (CAST(:ward_id AS text) IS NULL OR EXISTS (
+                    SELECT 1 FROM official_alert_wards x
+                    WHERE x.identifier = a.identifier AND x.ward_id = :ward_id))
+            GROUP BY a.identifier
+            ORDER BY a.sent DESC
+            """
+        ),
+        {"at": at, "ward_id": ward_id},
+    ).mappings()
+    latest = conn.execute(
+        text(
+            f"""
+            SELECT {OFFICIAL_FIELDS}
+            FROM official_alerts a LEFT JOIN official_alert_wards w ON w.identifier = a.identifier
+            WHERE a.feed = 'maharashtra' AND a.sent <= :at
+            GROUP BY a.identifier ORDER BY a.sent DESC LIMIT :n
+            """
+        ),
+        {"at": at, "n": max(0, min(recent, 50))},
+    ).mappings()
+    alerts = [_official(r) for r in active]
+    warnings = official_warnings(last_fetch, at, now)
+    return OfficialAnswer(
+        at=at,
+        last_fetch=last_fetch,
+        alerts=alerts,
+        recent=[_official(r) for r in latest],
+        warnings=warnings,
+    )
 
 
 if WEB_DIST.exists():  # the built map (cd web && npm run build); mounted last so /v1 wins

@@ -33,6 +33,7 @@ def test_steps_run_inputs_before_models_before_runs():
         "landslide",
         "impact",
         "alerts",
+        "official",
     ]
 
 

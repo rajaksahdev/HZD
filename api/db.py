@@ -188,6 +188,7 @@ class AlertMessage(Base):
     status: Mapped[str] = mapped_column(String(12), index=True)
     reason: Mapped[str | None] = mapped_column(String(300))  # why it needs or got approval
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # left pending
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[str | None] = mapped_column(String(64))
     key_id: Mapped[str | None] = mapped_column(String(32))
@@ -226,6 +227,68 @@ class AlertTarget(Base):
     measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class OfficialAlert(Base):
+    """One CAP message from SACHET, NDMA's alert feed (Stage 14): IMD, the state disaster
+    authority, CWC, INCOIS and others. Shown beside HazardLens alerts, never changed."""
+
+    __tablename__ = "official_alerts"
+
+    identifier: Mapped[str] = mapped_column(String(80), primary_key=True)  # CAP identifier
+    guid: Mapped[str] = mapped_column(String(40), unique=True)  # SACHET feed item id
+    feed: Mapped[str] = mapped_column(String(24))  # maharashtra or india
+    agency: Mapped[str | None] = mapped_column(String(80))  # e.g. IMD Mumbai
+    sender: Mapped[str | None] = mapped_column(String(120))
+    sent: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(12))  # Actual, Exercise, Test, ...
+    msg_type: Mapped[str] = mapped_column(String(8))  # Alert, Update, Cancel
+    refs: Mapped[str | None] = mapped_column(Text)  # identifiers this one replaces
+    superseded_by: Mapped[str | None] = mapped_column(String(80))
+    event: Mapped[str | None] = mapped_column(String(120))
+    category: Mapped[str | None] = mapped_column(String(40))
+    severity: Mapped[str | None] = mapped_column(String(12))
+    urgency: Mapped[str | None] = mapped_column(String(12))
+    certainty: Mapped[str | None] = mapped_column(String(12))
+    effective: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    onset: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    headline: Mapped[str | None] = mapped_column(Text)  # English
+    headline_local: Mapped[str | None] = mapped_column(Text)  # Marathi or Hindi, as sent
+    language_local: Mapped[str | None] = mapped_column(String(8))
+    instruction: Mapped[str | None] = mapped_column(Text)
+    area_desc: Mapped[str | None] = mapped_column(Text)
+    lgd_codes: Mapped[str | None] = mapped_column(String(400))  # LGD district codes
+    link: Mapped[str | None] = mapped_column(String(300))
+    match: Mapped[str] = mapped_column(String(12))  # how wards were found: polygon, lgd, none
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    geometry = mapped_column(Geometry("MULTIPOLYGON", srid=4326), nullable=True)
+
+
+class OfficialAlertWard(Base):
+    """Which of the 24 wards an official alert covers, and how much of each."""
+
+    __tablename__ = "official_alert_wards"
+
+    identifier: Mapped[str] = mapped_column(
+        ForeignKey("official_alerts.identifier", ondelete="CASCADE"), primary_key=True
+    )
+    ward_id: Mapped[str] = mapped_column(ForeignKey("wards.ward_id"), primary_key=True)
+    share: Mapped[float | None] = mapped_column(Float)  # of the ward's area; None for lgd
+
+
+class OfficialFeedFetch(Base):
+    """One poll of a SACHET feed, so the dashboard can say how fresh the official list is."""
+
+    __tablename__ = "official_feed_fetches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    feed: Mapped[str] = mapped_column(String(24))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ok: Mapped[bool] = mapped_column(Boolean)
+    items: Mapped[int] = mapped_column(Integer, default=0)  # items in the feed
+    new: Mapped[int] = mapped_column(Integer, default=0)  # CAP messages stored this time
+    error: Mapped[str | None] = mapped_column(String(300))
+
+
 # ward_risk was created in Stage 0 without the link to risk_runs; create_all never alters a table.
 LINK_RUNS = text(
     """
@@ -246,6 +309,13 @@ ADD_VALUE = text(
 )
 
 
+# Stage 14 added closed_at to alert_messages (when a draft stopped waiting).
+ADD_CLOSED = text(
+    "DO $$ BEGIN IF to_regclass('alert_messages') IS NOT NULL THEN "
+    "ALTER TABLE alert_messages ADD COLUMN IF NOT EXISTS closed_at timestamptz; END IF; END $$"
+)
+
+
 def init_db() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
@@ -253,3 +323,4 @@ def init_db() -> None:
     with engine.begin() as conn:
         conn.execute(LINK_RUNS)
         conn.execute(ADD_VALUE)
+        conn.execute(ADD_CLOSED)

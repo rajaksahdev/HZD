@@ -259,11 +259,11 @@ def issue(
     """Sign and send a stored draft: next sequence for its alert, signature over the JSON."""
     previous = latest_issued(session, row.alert_id)
     if row.message_type != MessageType.ALERT and not is_active(previous, now):
-        row.status = "withdrawn"
+        row.status, row.closed_at = "withdrawn", now
         raise ValueError(f"alert {row.alert_id} is no longer active")
     issued_at = _second(now)
     if row.expires_at <= issued_at:
-        row.status = "expired"
+        row.status, row.closed_at = "expired", now
         raise ValueError(f"message {row.id} expired before it was sent")
     alert = Alert(
         alert_id=row.alert_id,
@@ -284,6 +284,7 @@ def issue(
     body = alert.model_dump(mode="json")
     body["signature"] = keys.sign(private, body)
     row.sequence, row.issued_at, row.status = alert.sequence, issued_at, "issued"
+    row.closed_at = issued_at
     row.key_id, row.signature, row.body = alert.key_id, body["signature"], json.dumps(body)
     row.approved_by = approved_by
     session.flush()
@@ -346,14 +347,14 @@ def process_run(
             raise ValueError(f"run {run_id} has {len(hazards)} hazards, expected one")
         hazard = hazards.pop()
         wards = [r.ward_id for r in risks]
-        # Drafts still waiting from earlier runs: expired ones lapse, the rest give way to this
-        # run's decision. A new alert that was never sent keeps its alert_id.
+        # Drafts still waiting from earlier runs give way to this run's decision; expired ones
+        # are left alone (they lapse by their expiry). A never-sent alert keeps its alert_id.
         waiting = session.execute(
             text(
-                "UPDATE alert_messages SET status = CASE WHEN expires_at <= :now "
-                "THEN 'expired' ELSE 'superseded' END "
+                "UPDATE alert_messages SET status = 'superseded', closed_at = :now "
                 "WHERE status = 'pending' AND hazard = :h AND ward_id = ANY(:w) "
-                "AND created_at <= :now RETURNING ward_id, alert_id, message_type, status"
+                "AND created_at <= :now AND expires_at > :now "
+                "RETURNING ward_id, alert_id, message_type, status"
             ),
             {"h": hazard.value, "w": wards, "now": now},
         ).all()
@@ -427,7 +428,7 @@ def reject(message_id: int, name: str, password: str, code: str, reason: str, no
         if row is None or row.status != "pending":
             session.commit()
             raise ValueError(f"message {message_id} is not waiting for approval")
-        row.status, row.approved_by = "rejected", op.name
+        row.status, row.approved_by, row.closed_at = "rejected", op.name, now
         row.reason = f"{row.reason or ''}; rejected: {reason}".strip("; ")[:300]
         session.commit()
 
@@ -453,10 +454,10 @@ def cancel(
             raise ValueError(f"alert {alert_id} is not active")
         session.execute(
             text(
-                "UPDATE alert_messages SET status = 'superseded' "
+                "UPDATE alert_messages SET status = 'superseded', closed_at = :now "
                 "WHERE alert_id = :a AND status = 'pending'"
             ),
-            {"a": alert_id},
+            {"a": alert_id, "now": now},
         )
         draft = Draft(
             ward_id=current.ward_id,
@@ -798,7 +799,7 @@ def main(argv: list[str] | None = None) -> int:
         with SessionLocal() as session:
             rows = session.scalars(
                 select(AlertMessage)
-                .where(AlertMessage.status == "pending")
+                .where(AlertMessage.status == "pending", AlertMessage.expires_at > func.now())
                 .order_by(AlertMessage.id)
             )
             for m in rows:
