@@ -8,7 +8,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "1.1"  # 1.1: WardRisk.value and unit (Stage 9)
+SCHEMA_VERSION = "1.2"  # 1.1: WardRisk.value and unit (Stage 9); 1.2: Route, WardImpact
 
 
 class Hazard(StrEnum):
@@ -35,6 +35,11 @@ class MessageType(StrEnum):
     ALERT = "alert"
     UPDATE = "update"
     CANCEL = "cancel"
+
+
+class RouteStatus(StrEnum):
+    OK = "ok"
+    NO_SAFE_ROUTE = "no_safe_route"  # every way out uses a road avoided in this run
 
 
 class ReportStatus(StrEnum):
@@ -69,6 +74,38 @@ class WardRisk(_Base):
         if self.valid_to <= self.valid_from:
             raise ValueError("valid_to must be after valid_from")
         return self
+
+
+class Route(_Base):
+    """Road route from a ward's population-weighted centre to its nearest facility (Stage 12)."""
+
+    ward_id: str
+    kind: str = Field(pattern="^(shelter|hospital)$")
+    run_id: str  # the risk run whose roads were avoided, or "baseline"
+    status: RouteStatus
+    facility_id: str | None = None
+    facility_name: str | None = None
+    distance_m: float | None = Field(default=None, ge=0)  # None when there is no safe route
+    baseline_m: float | None = Field(default=None, ge=0)  # the same trip avoiding no roads
+    avoided_km: float = Field(default=0, ge=0)  # road kept off in this ward
+    people_cut_off: int = Field(default=0, ge=0)  # people who cannot reach one
+
+
+class WardImpact(_Base):
+    """People at risk in one ward for one run (Stage 12)."""
+
+    ward_id: str
+    hazard: Hazard
+    run_id: str | None
+    population: int | None = Field(default=None, ge=0)
+    exposed: int | None = Field(default=None, ge=0)  # flood: people on low-lying land
+    vulnerability_index: float | None = Field(default=None, ge=0, le=1)
+    probability: float | None = Field(default=None, ge=0, le=1)
+    severity: Severity | None = None
+    people_at_risk: int | None = Field(default=None, ge=0)  # probability x exposed
+    impact_score: int | None = Field(default=None, ge=0)  # people at risk x (0.5 + index)
+    shelter: Route | None = None
+    hospital: Route | None = None
 
 
 class Alert(_Base):

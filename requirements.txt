@@ -10,6 +10,8 @@ earthaccess
 cdsapi
 requests
 scikit-learn
+networkx
+osmnx
 xgboost
 matplotlib
 fastapi

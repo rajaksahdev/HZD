@@ -29,9 +29,9 @@ import pandas as pd
 import xarray as xr
 from sqlalchemy import delete, select
 
-from api.db import RiskRun, SessionLocal, WardRiskRow, init_db
+from api.db import RiskRun, SessionLocal, WardRiskRow, WardRoute, init_db
 from api.schemas import Hazard, Severity, Trust, WardRisk
-from models import blend, flood, forecast
+from models import blend, flood, forecast, impact
 from pipelines import store
 from pipelines.grid import target_coords
 
@@ -225,7 +225,9 @@ def list_runs() -> list[dict]:
 
 
 def delete_run(run_id: str) -> bool:
+    init_db()  # ward_route may not exist yet in an older database
     with SessionLocal.begin() as session:
+        session.execute(delete(WardRoute).where(WardRoute.run_id == run_id))
         session.execute(delete(WardRiskRow).where(WardRiskRow.run_id == run_id))
         return session.execute(delete(RiskRun).where(RiskRun.run_id == run_id)).rowcount > 0
 
@@ -267,6 +269,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Saved run {run_id} ({'TEST' if result['run']['is_test'] else 'LIVE'})")
     print(f"{result['run']['note']}")
     print(f"Probability {probs.min():.2f} to {probs.max():.2f}; severity {counts.to_dict()}")
+    if impact.inputs_ready():  # Stage 12: routes that keep off roads likely to flood
+        rows = impact.routes(impact.Inputs.load(), run_id)
+        impact.save_routes(rows)
+        print(impact.routes_summary(rows))
     return 0
 
 

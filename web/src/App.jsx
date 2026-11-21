@@ -25,6 +25,13 @@ const HAZARDS = {
   },
 };
 const NO_DATA = "#9e9e9e";
+// Stage 12: facilities and routes. Hospitals in purple so they never read as a severity.
+const PLACES = {
+  shelter: { label: "Shelter candidate (school, community centre)", color: "#1565c0" },
+  hospital: { label: "Hospital", color: "#6a1b9a" },
+};
+const UNSAFE = "#c62828"; // a route that crosses roads likely to flood
+const EMPTY = { type: "FeatureCollection", features: [] };
 const COLOR = Object.fromEntries(LEVELS.map((l) => [l.key, l.color]));
 const STALE_MINUTES = 180; // same as api/main.py
 const REFRESH_MS = 5 * 60 * 1000;
@@ -38,6 +45,19 @@ const ist = (iso, withTime = true) =>
     year: "numeric",
     ...(withTime ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}),
   });
+
+const km = (m) => (m == null ? "—" : `${(m / 1000).toFixed(1)} km`);
+const people = (n) =>
+  n == null ? "—" : n >= 100000 ? `${(n / 100000).toFixed(1)} lakh` : n.toLocaleString("en-IN");
+
+function routeText(r) {
+  if (!r) return "not computed";
+  const where = r.facility_name || "unnamed";
+  if (r.status === "no_safe_route")
+    return `no safe route: every way out crosses roads likely to flood (usual: ${where}, ${km(r.baseline_m)})`;
+  const longer = r.baseline_m != null && r.distance_m > r.baseline_m ? `, usually ${km(r.baseline_m)}` : "";
+  return `${where}, ${km(r.distance_m)} by road${longer}`;
+}
 
 function ageText(minutes) {
   if (minutes < 120) return `${minutes} min`;
@@ -82,17 +102,21 @@ export default function App() {
   const [picked, setPicked] = useState(null);
   const [now, setNow] = useState(Date.now());
   const [ready, setReady] = useState(null); // the map, once its layers exist
+  const [impact, setImpact] = useState(null); // GET /v1/impact for the shown run
+  const [wardImpact, setWardImpact] = useState(null); // the picked ward's impact and routes
 
   const load = useCallback(async () => {
     try {
       const q = new URLSearchParams({ hazard });
       if (runId) q.set("run_id", runId);
-      const [runList, wards] = await Promise.all([
+      const [runList, wards, people] = await Promise.all([
         getJson(`/v1/runs?hazard=${hazard}&limit=50`),
         getJson(`/v1/wards?${q}`),
+        getJson(`/v1/impact?${q}`).catch(() => null),
       ]);
       setRuns(runList);
       setData(wards);
+      setImpact(people);
       setError("");
     } catch (e) {
       setError(`Cannot load risk: ${e.message}`);
@@ -113,6 +137,7 @@ export default function App() {
     setHazard(next);
     setRunId("");
     setPicked(null);
+    setWardImpact(null);
   };
 
   useEffect(() => {
@@ -171,6 +196,39 @@ export default function App() {
         layout: { "text-field": ["get", "ward_id"], "text-font": ["Open Sans Semibold"], "text-size": 12 },
         paint: { "text-color": "#102027", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
       });
+      m.addSource("routes", { type: "geojson", data: EMPTY });
+      const unsafe = ["==", ["get", "status"], "no_safe_route"];
+      m.addLayer({
+        id: "route-line",
+        type: "line",
+        source: "routes",
+        filter: ["!", unsafe],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": ["match", ["get", "kind"], "hospital", PLACES.hospital.color, PLACES.shelter.color],
+          "line-width": 4,
+        },
+      });
+      m.addLayer({
+        id: "route-unsafe",
+        type: "line",
+        source: "routes",
+        filter: unsafe,
+        paint: { "line-color": UNSAFE, "line-width": 4, "line-dasharray": [1, 1.5] },
+      });
+      m.addSource("facilities", { type: "geojson", data: EMPTY });
+      m.addLayer({
+        id: "facility-dot",
+        type: "circle",
+        source: "facilities",
+        minzoom: 12,
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 2.5, 16, 6],
+          "circle-color": ["match", ["get", "group"], "hospital", PLACES.hospital.color, PLACES.shelter.color],
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1,
+        },
+      });
       m.on("mouseenter", "ward-fill", () => (m.getCanvas().style.cursor = "pointer"));
       m.on("mouseleave", "ward-fill", () => (m.getCanvas().style.cursor = ""));
       setReady(m);
@@ -188,6 +246,7 @@ export default function App() {
       if (runId) q.set("run_id", runId);
       try {
         setPicked({ loading: true });
+        setWardImpact(null);
         setPicked(await getJson(`/v1/risk?${q}`));
       } catch (err) {
         setPicked({ error: err.message });
@@ -201,6 +260,29 @@ export default function App() {
     if (ready && data) ready.getSource("wards").setData(data);
   }, [ready, data]);
 
+  // Facilities never change during a session: load them once.
+  useEffect(() => {
+    if (!ready) return;
+    getJson("/v1/facilities")
+      .then((f) => ready.getSource("facilities").setData(f))
+      .catch(() => {});
+  }, [ready]);
+
+  // The picked ward's people, shelter and hospital, for the run shown.
+  const pickedWard = picked?.ward_id;
+  useEffect(() => {
+    if (!pickedWard) return;
+    const q = new URLSearchParams({ hazard });
+    if (runId) q.set("run_id", runId);
+    getJson(`/v1/wards/${pickedWard}/impact?${q}`)
+      .then(setWardImpact)
+      .catch(() => setWardImpact(null));
+  }, [pickedWard, runId, hazard]);
+
+  useEffect(() => {
+    if (ready) ready.getSource("routes").setData(wardImpact?.routes || EMPTY);
+  }, [ready, wardImpact]);
+
   const run = data?.run;
   const ageMinutes = run ? Math.max(0, Math.floor((now - new Date(run.data_time)) / 60000)) : null;
   const wards = (data?.features || []).map((f) => f.properties);
@@ -209,7 +291,12 @@ export default function App() {
   const ranked = [...wards].sort((a, b) => score(b) - score(a));
   const isAlarm = (w) => /^\w+ risk (RED|ORANGE):/.test(w);
   const alarming = (data?.warnings || []).filter(isAlarm);
-  const otherWarnings = (data?.warnings || []).filter((w) => !isAlarm(w));
+  const otherWarnings = [
+    ...(data?.warnings || []).filter((w) => !isAlarm(w)),
+    ...(impact?.warnings || []),
+  ];
+  const impactOf = Object.fromEntries((impact?.wards || []).map((w) => [w.ward_id, w]));
+  const mine = wardImpact?.wards?.[0];
   const ranges = HAZARDS[hazard].ranges;
 
   return (
@@ -300,6 +387,49 @@ export default function App() {
                   trust {r.trust}
                 </span>
               ))}
+              {mine && (
+                <dl className="facts impact">
+                  <dt>People</dt>
+                  <dd>
+                    {people(mine.population)}
+                    {mine.exposed != null && !isHeat && (
+                      <span className="muted"> · {people(mine.exposed)} on low-lying land</span>
+                    )}
+                  </dd>
+                  <dt>At risk</dt>
+                  <dd>
+                    {people(mine.people_at_risk)}
+                    {mine.impact_score != null && (
+                      <span className="muted"> · impact score {people(mine.impact_score)}</span>
+                    )}
+                  </dd>
+                  <dt>Vulnerability</dt>
+                  <dd>
+                    {mine.vulnerability_index != null ? mine.vulnerability_index.toFixed(2) : "—"}{" "}
+                    <span className="muted">(0 to 1, rank among the 24 wards)</span>
+                  </dd>
+                  <dt>
+                    <span className="dot" style={{ background: PLACES.shelter.color }} />
+                    Shelter
+                  </dt>
+                  <dd>{routeText(mine.shelter)}</dd>
+                  <dt>
+                    <span className="dot" style={{ background: PLACES.hospital.color }} />
+                    Hospital
+                  </dt>
+                  <dd>{routeText(mine.hospital)}</dd>
+                  {mine.shelter?.avoided_km > 0 && (
+                    <>
+                      <dt>Avoided</dt>
+                      <dd>
+                        {mine.shelter.avoided_km.toFixed(1)} km of low-lying or waterlogging-prone road
+                        {mine.shelter.people_cut_off > 0 &&
+                          `; ${people(mine.shelter.people_cut_off)} people cannot reach a shelter without using one`}
+                      </dd>
+                    </>
+                  )}
+                </dl>
+              )}
             </div>
           )}
         </section>
@@ -318,6 +448,18 @@ export default function App() {
               No data
             </li>
           </ul>
+          <ul className="legend">
+            {Object.entries(PLACES).map(([key, p]) => (
+              <li key={key}>
+                <span className="dot" style={{ background: p.color }} />
+                {p.label} <span className="muted">(zoom in)</span>
+              </li>
+            ))}
+            <li>
+              <span className="dash" style={{ borderColor: UNSAFE }} />
+              Route that crosses roads likely to flood
+            </li>
+          </ul>
         </section>
 
         <section>
@@ -328,6 +470,9 @@ export default function App() {
                 <th>Ward</th>
                 <th>Level</th>
                 <th className="num">{isHeat ? "Feels like (max)" : "Probability"}</th>
+                <th className="num" title="Probability x people exposed">
+                  At risk
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -347,6 +492,7 @@ export default function App() {
                         ? w.probability.toFixed(2)
                         : "—"}
                   </td>
+                  <td className="num">{people(impactOf[w.ward_id]?.people_at_risk)}</td>
                 </tr>
               ))}
             </tbody>

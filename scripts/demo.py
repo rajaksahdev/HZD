@@ -20,6 +20,8 @@ skipped, so an interrupted run resumes):
             19 Aug 2025, heat on 23 Oct 2025 (Stages 6 and 9)
   replay    archived forecasts and the five replayed flood days (Stage 7)
   landslide landslide catalog, terrain for MMR and Raigad, susceptibility model (Stage 10)
+  impact    population, hospitals, shelter candidates, roads; vulnerability per ward and routes
+            for the hindcast (Stage 12)
   check    the API answers for every ward and the map is built
 
 Reports from the demo go to data/demo/, not docs/, so a demo run never changes committed files.
@@ -164,6 +166,23 @@ def landslide() -> None:
     run("models.landslide", "--report", (OUT / "landslide.md").as_posix())
 
 
+def impact_done() -> bool:
+    return (settings.processed_dir / "impact" / "ward_vulnerability.csv").exists()
+
+
+def impact() -> None:
+    from models import impact as stage12
+    from models import risk
+
+    run("models.impact", "--fetch")
+    run("models.impact", "--build", "--report", (OUT / "impact.md").as_posix())
+    hindcast = f"flood-observed-{HINDCAST_DAY.replace('-', '')}"
+    runs = [r["run_id"] for r in risk.list_runs() if r["run_id"].startswith(hindcast)]
+    replays = [r["run_id"] for r in risk.list_runs() if r["run_id"] == "replay-20250819-lead3d"]
+    if runs[:1] + replays and stage12.inputs_ready():
+        run("models.impact", "--routes", *(runs[:1] + replays))
+
+
 def blend_done() -> bool:
     return (MODELS / "blend.json").exists()
 
@@ -215,6 +234,12 @@ def check() -> list[str]:
     print(f"  heat run: {(heat.get('run') or {}).get('run_id')}, {len(hot)} wards with a value")
     if len(hot) != 24:
         problems.append(f"the current heat run has a value for {len(hot)} wards, expected 24")
+    people = client.get("/v1/impact").json()
+    with_people = [w for w in people.get("wards", []) if w.get("population")]
+    with_shelter = [w for w in with_people if (w.get("shelter") or {}).get("facility_name")]
+    print(f"  impact: {len(with_people)} wards with population, {len(with_shelter)} with a shelter")
+    if len(with_people) != 24 or len(with_shelter) != 24:
+        problems.append("Stage 12: expected population and a nearest shelter for all 24 wards")
     if not (ROOT / "web" / "dist" / "index.html").exists():
         problems.append("map not built: cd web && npm ci && npm run build")
     elif client.get("/").status_code != 200:
@@ -233,6 +258,7 @@ STEPS = [
     ("today", lambda: False, today),
     ("replay", lambda: False, replay),
     ("landslide", landslide_done, landslide),
+    ("impact", impact_done, impact),
 ]
 
 

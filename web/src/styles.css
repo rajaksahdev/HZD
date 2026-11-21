@@ -269,3 +269,26 @@ footer {
   background: var(--text);
   color: var(--bg);
 }
+
+/* Stage 12: facilities, routes and impact */
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid #ffffff;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.dash {
+  display: inline-block;
+  width: 18px;
+  border-top: 3px dashed;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.facts.impact {
+  margin-top: 8px;
+}

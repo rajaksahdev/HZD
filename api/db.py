@@ -79,6 +79,60 @@ class WardStatic(Base):
     wetland_frac: Mapped[float] = mapped_column(Float)
 
 
+class WardVulnerability(Base):
+    """Population, access and vulnerability per ward, written by models/impact.py (Stage 12)."""
+
+    __tablename__ = "ward_vulnerability"
+
+    ward_id: Mapped[str] = mapped_column(ForeignKey("wards.ward_id"), primary_key=True)
+    population: Mapped[int] = mapped_column(Integer)
+    area_km2: Mapped[float] = mapped_column(Float)
+    density_per_km2: Mapped[float] = mapped_column(Float)
+    low_lying_pop: Mapped[int] = mapped_column(Integer)  # people on land below 5 m
+    low_lying_share: Mapped[float] = mapped_column(Float)
+    shelter_km: Mapped[float] = mapped_column(Float)  # mean road distance, weighted by people
+    hospital_km: Mapped[float] = mapped_column(Float)
+    shelter_far_share: Mapped[float] = mapped_column(Float)  # share over 1 km from a shelter
+    hospital_far_share: Mapped[float] = mapped_column(Float)  # share over 2 km from a hospital
+    vulnerability_index: Mapped[float] = mapped_column(Float)  # mean of ranks, 0..1
+    built_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Facility(Base):
+    """Hospitals and shelter candidates from OpenStreetMap, or an official shelter list."""
+
+    __tablename__ = "facilities"
+
+    facility_id: Mapped[str] = mapped_column(String(40), primary_key=True)  # e.g. osm-way-123
+    kind: Mapped[str] = mapped_column(String(24), index=True)  # hospital, school, ...
+    name: Mapped[str | None] = mapped_column(String(200))
+    ward_id: Mapped[str | None] = mapped_column(ForeignKey("wards.ward_id"), index=True)
+    emergency: Mapped[bool] = mapped_column(Boolean, default=False)  # OSM emergency=yes
+    official: Mapped[bool] = mapped_column(Boolean, default=False)  # from an official list
+    geometry = mapped_column(Geometry("POINT", srid=4326), nullable=False)
+
+
+class WardRoute(Base):
+    """Road route from a ward to its nearest shelter candidate or hospital for one run (or
+    run_id 'baseline': no roads avoided). Not linked to risk_runs so the baseline fits."""
+
+    __tablename__ = "ward_route"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), index=True)
+    ward_id: Mapped[str] = mapped_column(ForeignKey("wards.ward_id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # shelter or hospital
+    facility_id: Mapped[str | None] = mapped_column(String(40))
+    facility_name: Mapped[str | None] = mapped_column(String(200))
+    distance_m: Mapped[float | None] = mapped_column(Float)  # None: no safe route
+    baseline_m: Mapped[float | None] = mapped_column(Float)  # same trip avoiding nothing
+    status: Mapped[str] = mapped_column(String(16))
+    avoided_km: Mapped[float] = mapped_column(Float, default=0.0)  # road avoided in the ward
+    people_cut_off: Mapped[int] = mapped_column(Integer, default=0)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    geometry = mapped_column(Geometry("LINESTRING", srid=4326), nullable=True)
+
+
 # ward_risk was created in Stage 0 without the link to risk_runs; create_all never alters a table.
 LINK_RUNS = text(
     """

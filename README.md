@@ -28,7 +28,8 @@ python -m scripts.demo --serve     # build everything missing, check it, open ht
 `scripts/demo.py` runs every stage below in order: static ward features, IMD rain for each label
 year, Open-Meteo forecasts for 2024-2025, the tide and rain-correction models, the flood model,
 today's flood and heat runs, hindcasts of 19 August 2025 (flood) and 23 October 2025 (heat),
-the Stage 7 replays, the Stage 10 landslide model and the Stage 11 blend and trust levels. It then
+the Stage 7 replays, the Stage 10 landslide model, the Stage 11 blend and trust levels and the
+Stage 12 population, shelters, hospitals and routes. It then
 checks that the
 API answers for all 24 wards and that the map is built. Steps already built are skipped, so an
 interrupted run resumes; `--force` rebuilds all, `--skip-replay` leaves out Stage 7. The first
@@ -253,6 +254,36 @@ python -m models.blend --report docs/blend.md      # fit, score, reliability plo
   six models; Stages 4 and 9 still use ECMWF, GFS and ICON. Saved model:
   `data/processed/models/blend.json`.
 
+## Vulnerability and routes (Stage 12)
+
+```bash
+python -m models.impact --fetch                              # population, facilities, roads
+python -m models.impact --build --report docs/impact.md      # vulnerability per ward -> PostGIS
+python -m models.impact --routes RUN_ID                      # routes avoiding a run's risky roads
+```
+
+- **Population:** Meta/CIESIN High Resolution Settlement Layer, about 30 m cells: 13.2 million
+  people in the 24 wards (Census 2011: 12.4 million).
+- **Facilities:** OpenStreetMap hospitals (specialist clinics and labs left out) and shelter
+  candidates: schools, community centres and assembly points. BMC opens municipal schools as
+  flood shelters but its list is not open data; put an official list (CSV: name, lat, lon) in
+  `data/raw/shelters/` and it replaces the candidates.
+- **Roads:** the OSMnx drive network of the wards plus 1 km (33,000 junctions). Road distance
+  from every populated cell to the nearest shelter candidate and hospital.
+- **Vulnerability index:** mean rank among the 24 wards of density, share of people on low-lying
+  land, and road distance to a shelter and to a hospital (0 to 1, relative).
+- **Impact:** people at risk = probability x people exposed (flood: people on low-lying land;
+  heat: everyone); impact score = people at risk x (0.5 + vulnerability index).
+- **Routes:** in a flood run, segments in orange or red wards that are low-lying or within
+  250 m of a reported waterlogging spot are avoided. Each ward gets a route from its
+  population-weighted centre to the nearest reachable shelter candidate and hospital, or
+  "no safe route". `models.risk` computes routes for each new flood run; other runs fall back to
+  the baseline routes (nothing avoided) with a warning.
+- **API and map:** `GET /v1/impact`, `GET /v1/wards/{id}/impact` (with route GeoJSON),
+  `GET /v1/facilities`; `/v1/wards` carries population and people at risk. The map lists people
+  at risk per ward, shows facilities when zoomed in, and draws the picked ward's routes (dashed
+  red when there is no safe route). Results and limits: `docs/impact.md`.
+
 ## Layout
 
 ```
@@ -263,13 +294,14 @@ models/     forecast.py (bias correction and skill scores), tide.py (harmonic ti
             flood.py (XGBoost flood model), risk.py (risk run for every ward -> PostGIS),
             replay.py (past flood days as if live, lead time), heat.py (heat stress),
             landslide.py (landslide susceptibility, MMR and Raigad), blend.py (model blend,
-            trust levels, bust detection)
+            trust levels, bust detection), impact.py (population, shelters, hospitals,
+            vulnerability, people at risk, routes)
 web/        the map (React + MapLibre)
 assistant/  later stages
 labels/     flood_events.csv, the hand-kept flood label table
 docs/       data_log.md (source, date, licence, citation), qc_report.md, labels.md, forecast_skill.md,
             flood_model.md, replay.md, report_sem1.md (Semester 1 report), heat.md,
-            landslide.md, blend.md and blend_reliability.svg
+            landslide.md, blend.md and blend_reliability.svg, impact.md
 data/       raw and processed files, not committed
 ```
 
